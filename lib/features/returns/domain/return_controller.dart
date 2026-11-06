@@ -62,6 +62,9 @@ class ReturnController extends ChangeNotifier {
   final Duration checkDelay;
 
   final Map<String, BasketItem> _items = {};
+
+  /// Tags with no product, left out of this return.
+  int ignoredUnknown = 0;
   final Map<String, SkuInfo> _info = {}; // sku → picture + team price
   String _clientRef;
   Timer? _timer;
@@ -179,6 +182,14 @@ class ReturnController extends ChangeNotifier {
         final tags = await inspector.inspect(batch);
         if (generation != _generation) return;
         for (final t in tags) {
+          if (t['found'] == false) {
+            // No product behind this tag: not an item coming back, so it's left out.
+            if (_items.remove(t['epc']) != null) {
+              ignoredUnknown++;
+              message = '${ignoredUnknown == 1 ? '1 unknown tag' : '$ignoredUnknown unknown tags'} ignored (no product).';
+            }
+            continue;
+          }
           final item = returnItemFromInspection(t);
           if (_items.containsKey(item.epc)) _items[item.epc] = item;
         }

@@ -23,6 +23,7 @@ class ScanPage extends StatefulWidget {
     this.known,
     this.inspector,
     this.target = 'basket',
+    this.allowedSkus,
     this.title = 'Scan items',
     this.round = const Duration(milliseconds: 800),
   });
@@ -39,6 +40,10 @@ class ScanPage extends StatefulWidget {
   /// Where the tags go, for the last button: "Add 3 to basket" / "to return" / "to order".
   final String target;
 
+  /// Scanning for one StoreHub order: only these SKUs belong. Other products are shown in red
+  /// ("Not in this order") and left out. Null = any product.
+  final Set<String>? allowedSkus;
+
   final String title;
 
   /// One read round of the USB reader (it reads round after round until stopped).
@@ -54,6 +59,7 @@ class _ScanPageState extends State<ScanPage> {
   final Map<String, KnownTag> _looked = {}; // what the server said about tags the list didn't know
   final Set<String> _asking = {}; // being looked up
   ScanPhase _phase = ScanPhase.ready;
+  final Set<String> _unknown = {}; // tags with no product: dropped, and never added again
   int _run = 0; // which reading loop is the current one (a quick Stop then Scan starts a new one)
   ReaderState _usb = ReaderState.none;
   String? _error;
@@ -125,7 +131,7 @@ class _ScanPageState extends State<ScanPage> {
   bool _add(Iterable<String> epcs) {
     final fresh = [
       for (final e in epcs.toSet())
-        if (!_tags.contains(e)) e,
+        if (!_tags.contains(e) && !_unknown.contains(e)) e, // a known-unknown tag read again stays out
     ];
     if (fresh.isEmpty) return false;
     HapticFeedback.lightImpact();
@@ -159,6 +165,7 @@ class _ScanPageState extends State<ScanPage> {
       setState(() {
         _tags.clear();
         _looked.clear();
+        _unknown.clear();
         _phase = ScanPhase.ready;
         _error = null;
       });
@@ -232,9 +239,23 @@ class _ScanPageState extends State<ScanPage> {
     );
   }
 
+  /// A product that isn't on the StoreHub order being scanned.
+  bool _notInOrder(String epc) {
+    final allowed = widget.allowedSkus;
+    final sku = _what(epc)?.sku;
+    return allowed != null && sku != null && !allowed.contains(sku);
+  }
+
+  /// The tags that go on: everything scanned except products not in the order.
+  List<String> get _keep => [
+    for (final e in _tags)
+      if (!_notInOrder(e)) e,
+  ];
+
   Widget _count(BuildContext context) {
     final c = context.altai;
-    final n = _tags.length;
+    final n = _keep.length;
+    final notInOrder = _tags.length - n;
     final caption = switch (_phase) {
       ScanPhase.ready => n == 0 ? 'Put the items on the reader, then tap Scan.' : 'Tap Scan to read more.',
       ScanPhase.reading => 'Scanning… add or move items. Tap Stop scanning when all are read.',
@@ -262,12 +283,28 @@ class _ScanPageState extends State<ScanPage> {
         ),
         const SizedBox(height: D.space2),
         Text(caption, style: AltaiType.body.copyWith(color: c.inkMuted)),
+        if (_unknown.isNotEmpty) ...[
+          const SizedBox(height: D.space2),
+          Text(
+            '${_unknown.length == 1 ? '1 unknown tag' : '${_unknown.length} unknown tags'} ignored (no product).',
+            key: const ValueKey('ignored-unknown'),
+            style: AltaiType.caption.copyWith(color: c.inkMuted),
+          ),
+        ],
+        if (notInOrder > 0) ...[
+          const SizedBox(height: D.space2),
+          AltaiNotice(
+            '${notInOrder == 1 ? '1 item is' : '$notInOrder items are'} not in this order: '
+            "shown in red, they won't be added. Take them off the reader.",
+            warning: true,
+          ),
+        ],
       ],
     );
   }
 
   List<Widget> _buttons() {
-    final n = _tags.length;
+    final n = _keep.length;
     final reading = _phase == ScanPhase.reading;
     return [
       if (reading) ...[
@@ -280,7 +317,7 @@ class _ScanPageState extends State<ScanPage> {
           large: true,
           expand: true,
         ),
-      ] else if (n == 0) ...[
+      ] else if (_tags.isEmpty) ...[
         AltaiButton(
           'Scan',
           onPressed: _scan,
@@ -292,8 +329,8 @@ class _ScanPageState extends State<ScanPage> {
       ] else ...[
         // Done: the scan button becomes Remove all; Scan again adds another batch.
         AltaiButton(
-          'Add $n to ${widget.target}',
-          onPressed: () => Navigator.of(context).pop(List<String>.of(_tags)),
+          n == 0 ? 'Nothing to add' : 'Add $n to ${widget.target}',
+          onPressed: n == 0 ? null : () => Navigator.of(context).pop(_keep),
           variant: AltaiButtonVariant.primary,
           icon: Icons.arrow_forward_rounded,
           large: true,
@@ -336,14 +373,16 @@ class _ScanPageState extends State<ScanPage> {
             final epc = t['epc'] as String;
             setState(() {
               _asking.remove(epc);
-              _looked[epc] = t['found'] == true
-                  ? KnownTag(
-                      sku: t['sku'] as String?,
-                      productName: t['product_name'] as String?,
-                      productCode: t['product_code'] as String?,
-                      variation: t['variation'] as String?,
-                    )
-                  : const KnownTag(); // no product: shown as an unknown tag
+              if (t['found'] == true) {
+                _looked[epc] = KnownTag(
+                  sku: t['sku'] as String?,
+                  productName: t['product_name'] as String?,
+                  productCode: t['product_code'] as String?,
+                  variation: t['variation'] as String?,
+                );
+              } else if (t['found'] == false && _tags.remove(epc)) {
+                _unknown.add(epc); // no product behind this tag: not an item to sell or return
+              }
             });
           },
         );
@@ -402,18 +441,27 @@ class _ScanPageState extends State<ScanPage> {
                   (looking
                       ? 'Looking up…'
                       : r.what == null
-                      ? formatEpc(r.epc) // could not be looked up: the tag itself
+                      ? 'Item' // could not be looked up (no connection): checked at checkout
                       : 'Unknown tag: no product');
-              final sub = name == null ? null : (r.what?.variation ?? r.what?.sku);
+              final away = _notInOrder(r.epc);
+              final sub = away ? 'Not in this order' : (name == null ? null : (r.what?.variation ?? r.what?.sku));
               return Padding(
                 key: ValueKey('scanned-${r.what?.sku ?? r.epc}'),
                 padding: const EdgeInsets.symmetric(vertical: D.space2),
                 child: Row(
                   children: [
                     Icon(
-                      name == null ? Icons.sell_outlined : Icons.checkroom_rounded,
+                      away
+                          ? Icons.block_rounded
+                          : name == null
+                          ? Icons.sell_outlined
+                          : Icons.checkroom_rounded,
                       size: 22,
-                      color: name == null ? c.inkMuted : c.brandInk,
+                      color: away
+                          ? c.danger
+                          : name == null
+                          ? c.inkMuted
+                          : c.brandInk,
                     ),
                     const SizedBox(width: D.space3),
                     Expanded(
@@ -426,7 +474,11 @@ class _ScanPageState extends State<ScanPage> {
                             overflow: TextOverflow.ellipsis,
                             style: AltaiType.label.copyWith(
                               fontSize: 16,
-                              color: name == null ? c.inkMuted : c.ink,
+                              color: away
+                                  ? c.danger
+                                  : name == null
+                                  ? c.inkMuted
+                                  : c.ink,
                             ),
                           ),
                           if (sub != null)
@@ -434,7 +486,7 @@ class _ScanPageState extends State<ScanPage> {
                               sub,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: AltaiType.caption.copyWith(color: c.inkMuted),
+                              style: AltaiType.caption.copyWith(color: away ? c.danger : c.inkMuted),
                             ),
                         ],
                       ),

@@ -58,6 +58,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
     expect(find.text('Checkout'), findsOneWidget);
     expect(find.text('Classic Tee'), findsOneWidget);
+    expect(find.text('Last read'), findsNothing);
+    expect(find.textContaining('E280 1160'), findsNothing); // no EPCs on screen, only products
     expect(find.byTooltip('Log out'), findsNothing); // logging out is on the start page
 
     await tester.tap(find.byTooltip('Back'));

@@ -75,12 +75,14 @@ void main() {
     expect(r.canSubmit, isTrue);
   });
 
-  test('an unknown tag is blocked', () async {
+  test('a tag with no product is left out of the return, with a note', () async {
     final team = FakeTeam()
       ..override = (p) => p == 'Stock/TagLookup' ? json({'error': {'message': 'Tag not found'}}) : null;
     final r = await readyReturn(team);
-    expect(r.items.single.problem, 'Not registered to any product');
-    expect(r.canSubmit, isFalse);
+    expect(r.items, isEmpty);
+    expect(r.ignoredUnknown, 1);
+    expect(r.message, '1 unknown tag ignored (no product).');
+    expect(r.canSubmit, isFalse); // nothing left to return
   });
 
   test('saves a Stock In adjustment, then approves it', () async {

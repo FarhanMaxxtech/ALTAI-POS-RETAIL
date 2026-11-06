@@ -103,9 +103,9 @@ void main() {
           'B': 'Not in this order',
           'A': 'Order has only 2 of this',
           'D': 'Belongs to Pavilion',
-          'F': 'Not registered to any product',
         },
       );
+      expect(scan.ignoredUnknown, 1); // F has no product: left out, not refused
       expect(scan.allMatched, isTrue); // the paper bag needs no tag
     });
 

@@ -38,6 +38,9 @@ class OrderScanController extends ChangeNotifier {
   String? message;
 
   final Map<String, List<String>> _accepted = {}; // sku → tags, in scan order
+  /// Tags with no product, left out.
+  int ignoredUnknown = 0;
+
   final List<RejectedTag> rejected = [];
   final Set<String> _checking = {};
   Future<void> _queue = Future.value(); // checks run one batch after another, so counts stay right
@@ -83,6 +86,10 @@ class OrderScanController extends ChangeNotifier {
       for (final t in found) {
         final item = itemFromInspection(t, storeId);
         _checking.remove(item.epc);
+        if (t['found'] == false) {
+          ignoredUnknown++; // no product behind this tag: not an item of any order
+          continue;
+        }
         if (item.state != ItemState.ok) {
           rejected.insert(0, RejectedTag(item.epc, item.problem ?? 'Could not check this tag', name: item.productName));
           continue;

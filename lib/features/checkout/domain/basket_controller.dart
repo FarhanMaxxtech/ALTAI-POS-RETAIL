@@ -207,6 +207,7 @@ class BasketController extends ChangeNotifier {
     _info.clear();
     _loading.clear();
     _clientRef = newClientRef();
+    ignoredUnknown = 0;
     phase = BasketPhase.scanning;
     message = null;
     trxId = null;
@@ -269,8 +270,19 @@ class BasketController extends ChangeNotifier {
 
   void _apply(Map<String, dynamic> t) {
     final epc = t['epc'] as String;
-    if (_items[epc]?.state == ItemState.checking) _items[epc] = itemFromInspection(t, storeId);
+    if (_items[epc]?.state != ItemState.checking) return;
+    if (t['found'] == false) {
+      // No product behind this tag (a loose or test tag): not an item, so it's left out.
+      _items.remove(epc);
+      ignoredUnknown++;
+      message = '${ignoredUnknown == 1 ? '1 unknown tag' : '$ignoredUnknown unknown tags'} ignored (no product).';
+      return;
+    }
+    _items[epc] = itemFromInspection(t, storeId);
   }
+
+  /// Tags with no product, left out of this basket.
+  int ignoredUnknown = 0;
 
   final Set<String> _loading = {}; // SKUs whose picture + price are on the way
 

@@ -743,10 +743,9 @@ class _BasketScreenState extends State<BasketScreen> {
 
   Widget _scanBar(BuildContext context, int problemCount) {
     final c = context.altai;
-    final items = _basket.items;
-    final last = items.isEmpty ? null : items.last;
+    // A compact bar: more room for the items below.
     return Container(
-      padding: const EdgeInsets.all(D.space3),
+      padding: const EdgeInsets.symmetric(horizontal: D.space3, vertical: D.space2),
       decoration: BoxDecoration(
         color: c.surfaceRaised,
         borderRadius: BorderRadius.circular(D.radiusMd),
@@ -757,12 +756,14 @@ class _BasketScreenState extends State<BasketScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.sensors_rounded, color: c.brandInk),
-              const SizedBox(width: D.space3),
+              Icon(Icons.sensors_rounded, size: 20, color: c.brandInk),
+              const SizedBox(width: D.space2),
               Expanded(
                 child: Text(
                   'Put the items on the reader, then tap Scan.',
-                  style: AltaiType.body.copyWith(color: c.ink),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AltaiType.label.copyWith(color: c.ink),
                 ),
               ),
               const SizedBox(width: D.space3),
@@ -771,43 +772,22 @@ class _BasketScreenState extends State<BasketScreen> {
                 onPressed: _openScanPage,
                 variant: AltaiButtonVariant.primary,
                 icon: Icons.sensors_rounded,
-                large: true,
               ),
               const SizedBox(width: D.space3),
               ReaderStatusPill(reading: _reading),
             ],
           ),
-          const SizedBox(height: D.space2),
-          Padding(
-            padding: const EdgeInsets.only(left: 24 + D.space3),
-            child: Wrap(
-              spacing: D.space3,
-              runSpacing: D.space1,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                if (last == null)
-                  Text(
-                    'Nothing read yet.',
-                    style: AltaiType.caption.copyWith(color: c.inkMuted),
-                  )
-                else ...[
-                  Text('Last read', style: AltaiType.caption.copyWith(color: c.inkMuted)),
-                  Text(formatEpc(last.epc), style: AltaiType.epc.copyWith(fontSize: 14, color: c.ink)),
-                  if (last.state == ItemState.problem)
-                    Text(
-                      'Problem tag',
-                      style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.danger),
-                    ),
-                ],
-                if (problemCount > 0)
-                  AltaiBadge(
-                    '${plural(problemCount, 'tag')} need attention',
-                    tone: BadgeTone.danger,
-                    icon: Icons.warning_amber_rounded,
-                  ),
-              ],
+          if (problemCount > 0) ...[
+            const SizedBox(height: D.space2),
+            Padding(
+              padding: const EdgeInsets.only(left: 20 + D.space2),
+              child: AltaiBadge(
+                '${plural(problemCount, 'item')} need attention',
+                tone: BadgeTone.danger,
+                icon: Icons.warning_amber_rounded,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -1457,12 +1437,7 @@ class _CheckingRow extends StatelessWidget {
                     decoration: BoxDecoration(color: c.surfaceSunken, borderRadius: BorderRadius.circular(D.radiusSm)),
                   ),
                 const SizedBox(height: D.space1),
-                Text(
-                  formatEpc(item.epc),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AltaiType.epc.copyWith(fontSize: 12, color: c.inkMuted),
-                ),
+                Text('Checking…', style: AltaiType.caption.copyWith(fontSize: 12, color: c.inkMuted)),
               ],
             ),
           ),
@@ -1851,11 +1826,7 @@ class _ProblemRow extends StatelessWidget {
                   style: AltaiType.bodyStrong.copyWith(fontSize: 18, color: c.danger),
                 ),
                 Text(
-                  [
-                    ?name,
-                    if (item.variation != null) item.variation!,
-                    formatEpc(item.epc),
-                  ].join(' · '),
+                  [name ?? 'Unknown item', ?item.variation].join(' · '),
                   style: AltaiType.caption.copyWith(color: c.ink),
                 ),
               ],

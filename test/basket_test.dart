@@ -126,14 +126,12 @@ void main() {
     expect(basket.canComplete, isTrue);
   });
 
-  test('a basket with a problem cannot be completed until the piece is removed', () async {
+  test('a tag with no product is left out, with a note; the sale goes on', () async {
     api.tag = (epc) => {'epc': epc, 'found': epc == tagA, 'store_id': '12'};
     await scan('$tagA $tagB');
-    expect(basket.canComplete, isFalse);
-    await basket.complete();
-    expect(api.refs, isEmpty);
-
-    basket.remove(tagB);
+    expect(basket.items.map((i) => i.epc), [tagA]); // tagB has no product: dropped
+    expect(basket.ignoredUnknown, 1);
+    expect(basket.message, '1 unknown tag ignored (no product).');
     expect(basket.canComplete, isTrue);
     await basket.complete();
     expect(basket.phase, BasketPhase.done);

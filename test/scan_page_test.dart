@@ -207,7 +207,8 @@ void main() {
     await stop(tester);
     expect(find.text('Slim Jeans'), findsOneWidget);
     expect(find.text('× 2'), findsOneWidget); // a and b are the same SKU
-    expect(find.text('Unknown tag: no product'), findsOneWidget); // c has no product
+    expect(count(tester), '2'); // c has no product: dropped from the list
+    expect(find.text('1 unknown tag ignored (no product).'), findsOneWidget);
     expect(find.textContaining('E280'), findsNothing); // product names, not EPCs
   });
 
@@ -239,4 +240,75 @@ void main() {
     await tester.pump();
     expect(find.text('USB reader connected'), findsOneWidget);
   });
+
+  testWidgets('the same unknown tag read on every round counts once', (tester) async {
+    await open(tester, ScriptedReader([for (var i = 0; i < 8; i++) [a, c]]), inspector: NamingInspector());
+    await tester.tap(button('Scan'));
+    await rounds(tester, 8);
+    await stop(tester);
+    expect(find.text('1 unknown tag ignored (no product).'), findsOneWidget);
+    expect(count(tester), '1'); // only a
+  });
+
+  testWidgets('scanning for a StoreHub order: other products are red and left out', (tester) async {
+    result = null;
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final usb = ScriptedReader([
+      [a, b],
+    ]);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: altaiTheme(Brightness.light),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () async => result = await Navigator.of(context).push<List<String>>(
+                MaterialPageRoute(
+                  builder: (_) => ScanPage(
+                    reader: usb,
+                    inspector: OneOfEach(),
+                    target: 'order',
+                    allowedSkus: const {'CT-BLK-M'},
+                  ),
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(button('Scan'));
+    await rounds(tester, 1);
+    await stop(tester);
+
+    expect(find.text('Not in this order'), findsOneWidget); // the jeans
+    expect(find.textContaining('1 item is not in this order'), findsOneWidget);
+    expect(count(tester), '1');
+    await tester.tap(button('Add 1 to order'));
+    await tester.pumpAndSettle();
+    expect(result, [a]); // only the tee goes on
+  });
+}
+
+/// a = Classic Tee (CT-BLK-M), anything else = Slim Jeans (JN-32).
+class OneOfEach implements CheckoutApi {
+  @override
+  Future<List<Map<String, dynamic>>> inspect(List<String> epcs, {void Function(Map<String, dynamic> tag)? onEach}) async {
+    final out = [
+      for (final e in epcs)
+        e == a
+            ? {'epc': e, 'found': true, 'sku': 'CT-BLK-M', 'product_name': 'Classic Tee', 'variation': 'Black / M'}
+            : {'epc': e, 'found': true, 'sku': 'JN-32', 'product_name': 'Slim Jeans', 'variation': '32'},
+    ];
+    out.forEach(onEach ?? (_) {});
+    return out;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

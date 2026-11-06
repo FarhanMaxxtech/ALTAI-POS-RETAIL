@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- White Altai mark centred in the adaptive-icon safe zone (66dp of 108dp). -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_altai_mark"
+    android:insetLeft="32dp" android:insetRight="32dp"
+    android:insetTop="34dp" android:insetBottom="34dp" />

@@ -6,6 +6,7 @@ import 'features/auth/data/session_store.dart';
 import 'features/auth/domain/staff.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/checkout/data/checkout_api.dart';
+import 'features/checkout/data/store_tags.dart';
 import 'features/checkout/presentation/basket_screen.dart';
 import 'features/catalog/data/catalog_api.dart';
 import 'features/orders/data/orders_api.dart';
@@ -35,6 +36,24 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
   Staff? _staff;
   Store? _location;
   bool _restoring = true; // checking the saved login when the app opens
+  StoreTags? _storeTags; // the location's tags, kept on the tablet
+  String? _storeTagsFor;
+
+  /// The store's tag list for [storeId], loaded in the background (and refreshed) once logged in.
+  StoreTags _tagsFor(String storeId) {
+    if (_storeTagsFor != storeId || _storeTags == null) {
+      _storeTags?.dispose();
+      _storeTagsFor = storeId;
+      _storeTags = StoreTags((page) => _checkout.storeTagPage(storeId, page))..start();
+    }
+    return _storeTags!;
+  }
+
+  @override
+  void dispose() {
+    _storeTags?.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -85,6 +104,7 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
                   catalog: _catalog,
                   returns: _returns,
                   orders: _orders,
+                  storeTags: _tagsFor(location.id),
                   onLogout: _logout),
     );
   }

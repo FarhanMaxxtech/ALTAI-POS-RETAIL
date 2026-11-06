@@ -1,19 +1,18 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
-import '../../../shared/keyboard.dart';
+import '../../../shared/rfid_reader.dart';
+import '../../checkout/presentation/scan_page.dart';
 import '../../checkout/data/checkout_api.dart';
 import '../data/orders_api.dart';
 import '../domain/order.dart';
 import '../domain/order_scan_controller.dart';
 
 /// Scan the items of one paid StoreHub order. Wrong items and extra pieces are refused on the spot.
-/// Like the basket, the EPC box keeps the focus so a reader in keyboard mode can "type" each tag.
+/// The items are read with the Scan page (the USB RFID reader), like at checkout.
 class OrderScanScreen extends StatefulWidget {
   const OrderScanScreen({
     super.key,
@@ -22,6 +21,7 @@ class OrderScanScreen extends StatefulWidget {
     required this.orders,
     required this.storeId,
     required this.staffName,
+    this.tagReader = const UsbTagReader(),
   });
 
   final StoreHubOrder order;
@@ -29,6 +29,9 @@ class OrderScanScreen extends StatefulWidget {
   final OrdersApi orders;
   final String storeId;
   final String staffName;
+
+  /// The USB RFID reader the Scan page drives.
+  final TagReader tagReader;
 
   @override
   State<OrderScanScreen> createState() => _OrderScanScreenState();
@@ -42,10 +45,7 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
     storeId: widget.storeId,
     staffName: widget.staffName,
   );
-  final _input = TextEditingController();
-  final _focus = FocusNode();
   final _beeper = Beeper();
-  bool _typing = false;
   int _lastOk = 0;
   int _lastRejected = 0;
 
@@ -61,8 +61,6 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
   void dispose() {
     _scan.removeListener(_onChanged);
     _scan.dispose();
-    _input.dispose();
-    _focus.dispose();
     _beeper.dispose();
     super.dispose();
   }
@@ -79,20 +77,13 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
     _lastRejected = _scan.rejected.length;
   }
 
-  void _addTyped([String? _]) {
-    _scan.addText(_input.text);
-    _input.clear();
-    _focus.requestFocus();
-  }
-
-  void _toggleKeyboard() {
-    setState(() => _typing = !_typing);
-    _focus.unfocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _focus.requestFocus();
-      if (_typing) showKeyboard();
-    });
+  /// The Scan page: the order's items on the reader, Scan, and they all come back here.
+  Future<void> _scanItems() async {
+    final tags = await Navigator.of(context).push<List<String>>(
+      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, target: 'order')),
+    );
+    if (!mounted) return;
+    if (tags != null && tags.isNotEmpty) _scan.addText(tags.join(' '));
   }
 
   /// Leaving with tags scanned loses them (the order stays pending), so ask first.
@@ -206,29 +197,12 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
       ),
       child: Row(
         children: [
+          Icon(Icons.sensors_rounded, color: c.brandInk),
+          const SizedBox(width: D.space3),
           Expanded(
-            child: TextField(
-              controller: _input,
-              focusNode: _focus,
-              autofocus: true,
-              autocorrect: false,
-              enableSuggestions: false,
-              textCapitalization: TextCapitalization.characters,
-              keyboardType: _typing ? TextInputType.text : TextInputType.none,
-              style: AltaiType.epc.copyWith(color: c.ink),
-              decoration: InputDecoration(
-                hintText: 'Scan the items of this order',
-                hintStyle: AltaiType.epc.copyWith(color: c.inkMuted),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: D.space3, vertical: D.space3),
-                suffixIcon: IconButton(
-                  tooltip: _typing ? 'Hide keyboard' : 'Type an EPC',
-                  color: c.inkMuted,
-                  onPressed: _toggleKeyboard,
-                  icon: Icon(_typing ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined),
-                ),
-              ),
-              onSubmitted: _addTyped,
+            child: Text(
+              'Put the items of this order on the reader, then tap Scan.',
+              style: AltaiType.body.copyWith(color: c.ink),
             ),
           ),
           if (_scan.checkingCount > 0) ...[
@@ -237,6 +211,14 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
             const SizedBox(width: D.space2),
             Text('Checking ${_scan.checkingCount}', style: AltaiType.caption.copyWith(color: c.inkMuted)),
           ],
+          const SizedBox(width: D.space3),
+          AltaiButton(
+            'Scan',
+            onPressed: _scanItems,
+            variant: AltaiButtonVariant.primary,
+            icon: Icons.sensors_rounded,
+            large: true,
+          ),
         ],
       ),
     );

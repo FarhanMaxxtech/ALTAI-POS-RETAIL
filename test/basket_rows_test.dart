@@ -11,10 +11,17 @@ import 'support/fake_tag_reader.dart';
 
 /// Tags: A… = Classic Tee in two sizes, B… = Slim Jeans, C… = a product with a long name.
 class FakeApi implements CheckoutApi {
+  @override
+  Future<({List<Map<String, dynamic>> rows, int total})> storeTagPage(
+    String storeId,
+    int page, {
+    int pageSize = 200,
+  }) async => (rows: const <Map<String, dynamic>>[], total: 0);
   static Map<String, dynamic> _tag(String epc) {
     final (code, name, sku, variation) = switch (epc[0]) {
       'A' => ('CT', 'Classic Tee', epc[1] == '1' ? 'CT-BLK-M' : 'CT-BLK-L', epc[1] == '1' ? 'Black / M' : 'Black / L'),
       'B' => ('JN', 'Slim Jeans', 'JN-32', '32'),
+      'D' => ('D${epc.substring(1, 3)}', 'Product ${epc.substring(1, 3)}', 'SKU-${epc.substring(1, 3)}', 'Size M'),
       _ => ('LX', 'Limited edition heavyweight oversized hoodie with embroidery', 'LX-GRN-XXL', 'Forest green / XXL'),
     };
     return {
@@ -105,7 +112,7 @@ void main() {
     ];
     await tester.enterText(
       find.byWidgetPredicate((w) => w is TextField && w.decoration?.labelText == 'StoreHub receipt no.'),
-      'SH-0012',
+      '0022607201446208',
     );
     await scanWithReader(tester, reader, tags);
     await tester.pumpAndSettle();
@@ -164,4 +171,32 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('done screen and last look on the tablet: 10+ SKUs in view before scrolling', (tester) async {
+    // The tablet (SM-X610) in landscape: 2560 × 1600 px at 2.125 = 1205 × 753, less Android's bars.
+    await open(tester, const Size(1205, 753), 1.0, navBar: 48);
+    await tester.enterText(
+      find.byWidgetPredicate((w) => w is TextField && w.decoration?.labelText == 'StoreHub receipt no.'),
+      '0022607201446208',
+    );
+    await scanWithReader(tester, reader, [for (var i = 10; i < 22; i++) epc('D$i', 0)]); // 12 SKUs
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.textContaining('Confirm'));
+    await tester.pumpAndSettle();
+    // The last look: only its item list scrolls; the buttons stay in view.
+    expect(find.byKey(const ValueKey('confirm-items')), findsOneWidget);
+    expect(tester.getRect(find.text('Submit')).bottom, lessThanOrEqualTo(753 - 48));
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+
+    final list = tester.getRect(find.byType(ListView).last);
+    final fullyShown = find
+        .byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('done-'))
+        .evaluate()
+        .where((e) => tester.getRect(find.byWidget(e.widget)).bottom <= list.bottom + 0.5)
+        .length;
+    expect(fullyShown, greaterThanOrEqualTo(10));
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -7,6 +7,8 @@ import 'package:altai_pos/shared/altai_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/fake_tag_reader.dart';
+
 /// Tags by first letter (tags are hex): A = CT-BLK-M, C = CT-BLK-L, B = JN-32, D = in another store, else unknown.
 class FakeInspector implements CheckoutApi {
   @override
@@ -52,6 +54,7 @@ final order = StoreHubOrder(
 );
 
 void main() {
+  final reader = FakeTagReader();
   test('a tag fits only if its SKU is on the order and the line isn\'t full', () {
     expect(rejectReason(order, 'CT-BLK-M', 0), isNull);
     expect(rejectReason(order, 'CT-BLK-M', 1), isNull);
@@ -132,7 +135,7 @@ void main() {
     final fake = FakeOrdersApi(delay: Duration.zero);
     final tags = await FakeInspector().inspect([tag('A', 1), tag('A', 2), tag('B', 1), tag('F', 1)]);
     final o = fake.addFromTags('12', tags)!;
-    expect(o.invoiceNumber, 'DEMO-001');
+    expect(o.invoiceNumber, matches(RegExp(r'^\d{16}$'))); // shaped like a StoreHub receipt no.
     expect([for (final l in o.lines) '${l.sku} x${l.qty}'], ['CT-BLK-M x2', 'JN-32 x1']);
     expect(
       fake.addFromTags('12', [
@@ -140,7 +143,7 @@ void main() {
       ]),
       isNull,
     );
-    expect((await fake.pending('12')).map((o) => o.invoiceNumber), contains('DEMO-001'));
+    expect((await fake.pending('12')).map((o) => o.invoiceNumber), contains(o.invoiceNumber));
   });
 
   for (final (name, size) in [('landscape', Size(1280, 800)), ('portrait', Size(800, 1280))]) {
@@ -153,6 +156,7 @@ void main() {
         MaterialApp(
           theme: altaiTheme(Brightness.light),
           home: OrdersScreen(
+            tagReader: reader,
             orders: orders,
             inspector: FakeInspector(),
             storeId: '12',
@@ -164,19 +168,20 @@ void main() {
       await tester.pumpAndSettle();
 
       // Two demo orders; the old one is flagged.
-      expect(find.text('SH-0012'), findsOneWidget);
-      expect(find.text('SH-0013'), findsOneWidget);
+      final older = orders.all[0].invoiceNumber, newer = orders.all[1].invoiceNumber;
+      expect(older, matches(RegExp(r'^\d{16}$')));
+      expect(find.text(older), findsOneWidget);
+      expect(find.text(newer), findsOneWidget);
       expect(find.text('Not scanned yet'), findsOneWidget);
       expect(find.textContaining('Demo orders'), findsOneWidget);
 
-      await tester.tap(find.text('SH-0013'));
+      await tester.tap(find.text(newer));
       await tester.pumpAndSettle();
-      expect(find.text('Order SH-0013'), findsOneWidget);
+      expect(find.text('Order $newer'), findsOneWidget);
       expect(find.text('0 / 2'), findsOneWidget);
 
       Future<void> scanTags(String text) async {
-        await tester.enterText(find.byType(TextField), text);
-        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await scanWithReader(tester, reader, text.split(' '));
         await tester.pumpAndSettle();
       }
 
@@ -195,13 +200,14 @@ void main() {
 
       await tester.tap(find.text('Back to orders'));
       await tester.pumpAndSettle();
-      expect(find.text('SH-0013'), findsNothing); // done orders leave the list
-      expect(find.text('SH-0012'), findsOneWidget);
+      expect(find.text(newer), findsNothing); // done orders leave the list
+      expect(find.text(older), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }
 
   testWidgets('leaving a half-scanned order asks first', (tester) async {
+    final demo = FakeOrdersApi(delay: Duration.zero);
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -209,7 +215,8 @@ void main() {
       MaterialApp(
         theme: altaiTheme(Brightness.light),
         home: OrdersScreen(
-          orders: FakeOrdersApi(delay: Duration.zero),
+          tagReader: reader,
+          orders: demo,
           inspector: FakeInspector(),
           storeId: '12',
           storeName: 'MidValley',
@@ -218,10 +225,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('SH-0012'));
+    await tester.tap(find.text(demo.all[0].invoiceNumber));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), tag('A', 1));
-    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await scanWithReader(tester, reader, [tag('A', 1)]);
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();

@@ -232,7 +232,7 @@ class ReturnController extends ChangeNotifier {
         final found = from == ReturnPhase.retry ? await api.findByRef(storeId, _clientRef) : null;
         trxId = found ?? await api.save(storeId: storeId, epcs: _items.keys.toList(), remark: _remark);
       } on ApiException catch (e) {
-        message = e.message;
+        message = _markStillInStock(e.message) ?? e.message;
         // Refused: nothing saved, staff can fix it and send again. No answer: may be saved, check first.
         phase = e.noAnswer || (e.status ?? 0) >= 500 ? ReturnPhase.retry : ReturnPhase.scanning;
         notifyListeners();
@@ -249,6 +249,29 @@ class ReturnController extends ChangeNotifier {
       phase = e.noAnswer || (e.status ?? 0) >= 500 ? ReturnPhase.retry : ReturnPhase.notApproved;
     }
     notifyListeners();
+  }
+
+  /// The server refuses a return of a piece that is still in a store's stock ("EPC [..] is already
+  /// assigned to Subang Jaya (GB1) - cannot adjust in again"): it was never sold, so it can't come
+  /// back. Marks those pieces red and returns a message for the cashier; null if it's another error.
+  String? _markStillInStock(String error) {
+    final hits = RegExp(r'EPC \[([0-9A-Fa-f]+)\] is already assigned to (.+?)\s*-\s*cannot adjust in')
+        .allMatches(error)
+        .toList();
+    if (hits.isEmpty) return null;
+    for (final m in hits) {
+      final epc = m.group(1)!.toUpperCase();
+      final old = _items[epc];
+      if (old == null) continue;
+      _items[epc] = BasketItem(epc,
+          state: ItemState.problem,
+          problem: "Still in stock at ${m.group(2)}: it was never sold, so it can't be returned",
+          productName: old.productName,
+          variation: old.variation,
+          sku: old.sku);
+    }
+    return '${hits.length == 1 ? '1 piece is' : '${hits.length} pieces are'} still in stock, so not sold. '
+        'Remove the red ${hits.length == 1 ? 'one' : 'ones'} and submit again. Nothing was saved.';
   }
 
   @override

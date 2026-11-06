@@ -99,6 +99,20 @@ class CheckoutApi {
   /// [clientRef] goes into the remark, so [findByRef] can tell later whether it went through.
   /// [receiptNo] (the StoreHub receipt) goes there too, so the sale can be matched with StoreHub;
   /// without one, [noReceiptReason] says why. Returns the team's transaction number.
+  /// One page of the store's tag list (Stock/EpcList by store): kept on the tablet by StoreTags.
+  Future<({List<Map<String, dynamic>> rows, int total})> storeTagPage(String storeId, int page, {int pageSize = 200}) async {
+    final res = await _api.post('Stock/EpcList', {
+      'epc': '',
+      'productName': '',
+      'storeId': storeId,
+      'page': page,
+      'pageSize': pageSize,
+    });
+    final rows = (res['data'] as List<dynamic>? ?? const []).cast<Map<String, dynamic>>();
+    final total = int.tryParse('${res['recordsTotal']}') ?? rows.length;
+    return (rows: rows, total: total);
+  }
+
   Future<String> checkout({
     required String storeId,
     required String clientRef,

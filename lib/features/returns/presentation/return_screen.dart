@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../shared/altai_theme.dart';
-import '../../../shared/barcode_scan_screen.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
 import '../../../shared/keyboard.dart';
+import '../../../shared/rfid_reader.dart';
+import '../../checkout/presentation/scan_page.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../checkout/data/checkout_api.dart';
 import '../../checkout/domain/basket.dart';
@@ -18,7 +19,7 @@ import '../domain/return_controller.dart';
 /// With [exchange] it's step 1 of an exchange: once the items are back in stock the screen closes and
 /// hands an [ExchangeReturn] to the checkout, where the new items are scanned.
 ///
-/// Like the basket, the EPC box keeps the focus so a reader in keyboard mode can "type" each tag.
+/// The items coming back are read with the Scan page (the USB RFID reader), like at checkout.
 class ReturnScreen extends StatefulWidget {
   const ReturnScreen({
     super.key,
@@ -28,8 +29,8 @@ class ReturnScreen extends StatefulWidget {
     required this.storeName,
     required this.staffName,
     this.catalog,
-    this.barcodeScanner = scanBarcode,
     this.exchange = false,
+    this.tagReader = const UsbTagReader(),
   });
 
   final CheckoutApi inspector;
@@ -39,11 +40,11 @@ class ReturnScreen extends StatefulWidget {
   final String staffName;
   final CatalogApi? catalog;
 
-  /// Reads the receipt's barcode with the camera. Null = cancelled.
-  final Future<String?> Function(BuildContext context) barcodeScanner;
-
   /// Step 1 of an exchange: closes with an [ExchangeReturn] once the items are back in stock.
   final bool exchange;
+
+  /// The USB RFID reader the Scan page drives.
+  final TagReader tagReader;
 
   @override
   State<ReturnScreen> createState() => _ReturnScreenState();
@@ -56,11 +57,8 @@ class _ReturnScreenState extends State<ReturnScreen> {
       storeId: widget.storeId,
       staffName: widget.staffName,
       catalog: widget.catalog);
-  final _input = TextEditingController();
   final _receipt = TextEditingController();
-  final _focus = FocusNode();
   final _beeper = Beeper();
-  bool _typing = false; // on-screen keyboard for the EPC box
   int _lastCount = 0;
   bool _handedBack = false; // exchange: the result is passed back once
 
@@ -76,9 +74,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
   void dispose() {
     _return.removeListener(_onChanged);
     _return.dispose();
-    _input.dispose();
     _receipt.dispose();
-    _focus.dispose();
     _beeper.dispose();
     super.dispose();
   }
@@ -105,38 +101,18 @@ class _ReturnScreenState extends State<ReturnScreen> {
     }
   }
 
-  void _addTyped([String? _]) {
-    _return.addText(_input.text);
-    _input.clear();
-    _focus.requestFocus();
-  }
-
-  void _toggleKeyboard() {
-    setState(() => _typing = !_typing);
-    _focus.unfocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _focus.requestFocus();
-      if (_typing) showKeyboard();
-    });
-  }
-
-  /// Camera barcode → receipt box, then back to the EPC box for the items.
-  Future<void> _scanReceipt() async {
-    final value = await widget.barcodeScanner(context);
+  /// The Scan page: the returned items on the reader, Scan, and they all come back here.
+  Future<void> _scanItems() async {
+    final tags = await Navigator.of(context).push<List<String>>(
+        MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, target: 'return')));
     if (!mounted) return;
-    if (value != null) {
-      _receipt.text = value;
-      _return.setReceipt(value);
-    }
-    _focus.requestFocus();
+    if (tags != null && tags.isNotEmpty) _return.addText(tags.join(' '));
   }
 
   void _newReturn() {
     _return.reset();
     _receipt.clear();
     _lastCount = 0;
-    _focus.requestFocus();
   }
 
   /// A return that may be half done stays on screen until it's finished.
@@ -175,11 +151,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
         ],
       ),
     );
-    if (ok == true) {
-      _return.submit();
-    } else {
-      _focus.requestFocus();
-    }
+    if (ok == true) _return.submit();
   }
 
   @override
@@ -225,49 +197,36 @@ class _ReturnScreenState extends State<ReturnScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 820),
             child: ListView(padding: const EdgeInsets.all(D.space6), children: [
-              // 1. Which sale: typed, scanned with a barcode gun (it types + Enter), or with the camera.
+              // 1. Which sale: the receipt no., order no. or ID, typed from the iPad.
               TextField(
                 onTap: showKeyboard,
                 controller: _receipt,
                 style: AltaiType.body.copyWith(color: c.ink),
                 decoration: InputDecoration(
                   labelText: 'StoreHub receipt no., order no. or ID',
-                  hintText: 'Type it, or scan the barcode',
+                  hintText: 'Type it from the iPad',
                   prefixIcon: const Icon(Icons.receipt_long_rounded),
-                  suffixIcon: IconButton(
-                    tooltip: 'Scan barcode with camera',
-                    onPressed: _scanReceipt,
-                    icon: const Icon(Icons.qr_code_scanner_rounded),
-                  ),
                 ),
                 textCapitalization: TextCapitalization.characters,
                 autocorrect: false,
                 onChanged: _return.setReceipt,
-                onSubmitted: (_) => _focus.requestFocus(), // next: the items
               ),
               const SizedBox(height: D.space4),
-              // 2. The items coming back.
-              TextField(
-                controller: _input,
-                focusNode: _focus,
-                autofocus: true,
-                autocorrect: false,
-                enableSuggestions: false,
-                textCapitalization: TextCapitalization.characters,
-                keyboardType: _typing ? TextInputType.text : TextInputType.none,
-                style: AltaiType.epc.copyWith(fontSize: 20, color: c.ink),
-                decoration: InputDecoration(
-                  labelText: 'Items coming back',
-                  hintText: 'Scan or type EPC',
-                  prefixIcon: const Icon(Icons.sell_outlined),
-                  suffixIcon: IconButton(
-                    tooltip: _typing ? 'Hide keyboard' : 'Type an EPC',
-                    onPressed: _toggleKeyboard,
-                    icon: Icon(_typing ? Icons.keyboard_hide_rounded : Icons.keyboard_rounded),
-                  ),
+              // 2. The items coming back: read with the Scan page.
+              Row(children: [
+                Icon(Icons.sell_outlined, color: c.brandInk),
+                const SizedBox(width: D.space3),
+                Expanded(
+                  child: Text('Items coming back: put them on the reader, then tap Scan.',
+                      style: AltaiType.body.copyWith(color: c.ink)),
                 ),
-                onSubmitted: _addTyped,
-              ),
+                const SizedBox(width: D.space3),
+                AltaiButton('Scan',
+                    onPressed: _scanItems,
+                    variant: AltaiButtonVariant.primary,
+                    icon: Icons.sensors_rounded,
+                    large: true),
+              ]),
               if (_return.message != null) ...[
                 const SizedBox(height: D.space3),
                 AltaiNotice(_return.message!),
@@ -276,7 +235,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
               if (items.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: D.space6),
-                  child: Text('No items yet. Place the returned items on the pad.',
+                  child: Text('No items yet. Put the returned items on the reader and tap Scan.',
                       style: AltaiType.body.copyWith(color: c.inkMuted), textAlign: TextAlign.center),
                 ),
               for (final i in items)

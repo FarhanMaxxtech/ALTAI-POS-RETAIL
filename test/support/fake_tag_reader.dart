@@ -34,7 +34,7 @@ Future<void> scanWithReader(WidgetTester tester, FakeTagReader reader, List<Stri
   for (var i = 0; i < 4; i++) {
     await tester.pump(const Duration(milliseconds: 800)); // read rounds until nothing new
   }
-  await tester.tap(find.textContaining(RegExp(r'^Add \d+ to basket$')));
+  await tester.tap(find.textContaining(RegExp(r'^Add \d+ to ')));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 600)); // back on Checkout
 }

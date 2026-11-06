@@ -34,6 +34,9 @@ class FakeOrdersApi implements OrdersApi {
   @override
   bool get isDemo => true;
 
+  /// Every demo order, done or not (for tests).
+  List<StoreHubOrder> get all => List.unmodifiable(_orders);
+
   void _seed(String storeId) {
     if (_seeded) return;
     _seeded = true;
@@ -41,7 +44,7 @@ class FakeOrdersApi implements OrdersApi {
     _orders.addAll([
       StoreHubOrder(
         refId: 'demo-ref-1',
-        invoiceNumber: 'SH-0012',
+        invoiceNumber: demoReceiptNo(now.subtract(const Duration(minutes: 14)), 1),
         storeId: storeId,
         registerId: '1',
         paidAt: now.subtract(const Duration(minutes: 14)),
@@ -52,7 +55,7 @@ class FakeOrdersApi implements OrdersApi {
       ),
       StoreHubOrder(
         refId: 'demo-ref-2',
-        invoiceNumber: 'SH-0013',
+        invoiceNumber: demoReceiptNo(now.subtract(const Duration(minutes: 2)), 2),
         storeId: storeId,
         registerId: '1',
         paidAt: now.subtract(const Duration(minutes: 2)),
@@ -98,7 +101,7 @@ class FakeOrdersApi implements OrdersApi {
     if (lines.isEmpty) return null;
     final order = StoreHubOrder(
       refId: 'demo-tags-$_next',
-      invoiceNumber: 'DEMO-${(_next++).toString().padLeft(3, '0')}',
+      invoiceNumber: demoReceiptNo(_clock(), _next++),
       storeId: storeId,
       registerId: '1',
       paidAt: _clock(),
@@ -110,4 +113,10 @@ class FakeOrdersApi implements OrdersApi {
     _orders.add(order);
     return order;
   }
+}
+
+/// A receipt no. shaped like StoreHub's: register 002 + yymmdd + hhmmss + one more digit.
+String demoReceiptNo(DateTime t, int n) {
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '002${two(t.year % 100)}${two(t.month)}${two(t.day)}${two(t.hour)}${two(t.minute)}${two(t.second)}${n % 10}';
 }

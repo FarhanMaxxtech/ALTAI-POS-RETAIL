@@ -10,6 +10,12 @@ const tagB = 'E2801160000000B2';
 
 /// Stands in for the team's API. No network, so tests can't touch real stock.
 class FakeApi implements CheckoutApi {
+  @override
+  Future<({List<Map<String, dynamic>> rows, int total})> storeTagPage(
+    String storeId,
+    int page, {
+    int pageSize = 200,
+  }) async => (rows: const <Map<String, dynamic>>[], total: 0);
   final refs = <String>[];
   final receipts = <String>[]; // receipt no. or no-receipt reason sent with each checkout
   List<CheckoutSummary> earlier = []; // what findByReceipt finds
@@ -82,7 +88,7 @@ void main() {
 
   setUp(() {
     api = FakeApi();
-    basket = BasketController(api: api, storeId: '12', checkDelay: Duration.zero)..setReceipt('SH-0001');
+    basket = BasketController(api: api, storeId: '12', checkDelay: Duration.zero)..setReceipt('0022607201446208');
   });
   tearDown(() => basket.dispose());
 
@@ -179,18 +185,23 @@ void main() {
     basket.reset();
     expect(basket.items, isEmpty);
     expect(basket.receiptNo, isEmpty, reason: 'the next customer has their own receipt');
-    basket.setReceipt('SH-0002');
+    basket.setReceipt('0022607201449509');
     await scan(tagA);
     await basket.complete();
     expect(api.refs[0], isNot(api.refs[1]));
-    expect(api.receipts, ['SH-0001', 'SH-0002']);
+    expect(api.receipts, ['0022607201446208', '0022607201449509']);
   });
 
   test('no receipt: Confirm stays off until a receipt or a reason is given', () async {
     basket.setReceipt('  ');
     await scan(tagA);
     expect(basket.canComplete, isFalse);
-    expect(basket.missing, 'Enter or scan the StoreHub receipt number.');
+    expect(basket.missing, 'Enter the StoreHub receipt number.');
+
+    // A number that can't be a StoreHub receipt also keeps Confirm off, and says why.
+    basket.setReceipt('SH-0012');
+    expect(basket.canComplete, isFalse);
+    expect(basket.missing, 'A StoreHub receipt no. has only digits.');
 
     basket.setNoReceipt('StoreHub offline');
     expect(basket.canComplete, isTrue);

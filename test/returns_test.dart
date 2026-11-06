@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:altai_pos/core/api_client.dart';
 import 'package:altai_pos/features/checkout/data/checkout_api.dart';
+import 'package:altai_pos/features/checkout/domain/basket.dart';
 import 'package:altai_pos/features/returns/data/returns_api.dart';
 import 'package:altai_pos/features/returns/domain/return_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -147,6 +148,23 @@ void main() {
     await r.submit();
     expect(r.phase, ReturnPhase.scanning);
     expect(r.message, 'Store closed');
+    expect(team.count('Stock/AdjustmentApproveNoScan'), 0);
+  });
+
+  test('a piece still in stock (never sold): marked red with the reason, nothing saved', () async {
+    final team = FakeTeam()
+      ..override = (p) => p == 'Stock/Adjustment'
+          ? json({'error': 'EPC [E2801160000000A1] is already assigned to Subang Jaya (GB1) - cannot adjust in again.'})
+          : null;
+    final r = await readyReturn(team);
+    await r.submit();
+    expect(r.phase, ReturnPhase.scanning);
+    expect(r.message, '1 piece is still in stock, so not sold. Remove the red one and submit again. Nothing was saved.');
+    final item = r.items.single;
+    expect(item.state, ItemState.problem);
+    expect(item.problem, "Still in stock at Subang Jaya (GB1): it was never sold, so it can't be returned");
+    expect(item.productName, 'Classic Tee');
+    expect(r.canSubmit, isFalse);
     expect(team.count('Stock/AdjustmentApproveNoScan'), 0);
   });
 }

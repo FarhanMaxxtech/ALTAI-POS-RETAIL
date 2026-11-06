@@ -6,17 +6,18 @@ import 'package:flutter/services.dart';
 import '../../../core/api_client.dart';
 import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
-import '../../../shared/barcode_scan_screen.dart';
 import '../../../shared/beeper.dart';
 import '../../../shared/keyboard.dart';
 import '../../../shared/rfid_reader.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../orders/data/orders_api.dart';
+import '../../orders/domain/order.dart';
 import '../../orders/presentation/orders_screen.dart';
 import '../../returns/data/returns_api.dart';
 import '../../returns/domain/exchange.dart';
 import '../../returns/presentation/return_screen.dart';
 import '../data/checkout_api.dart';
+import '../data/store_tags.dart';
 import '../domain/basket.dart';
 import '../domain/basket_controller.dart';
 import '../domain/checkout_summary.dart';
@@ -38,9 +39,9 @@ class BasketScreen extends StatefulWidget {
     this.catalog,
     this.returns,
     this.orders,
-    this.barcodeScanner = scanBarcode,
     this.askReceiptOnScan = false,
     this.tagReader = const UsbTagReader(),
+    this.storeTags,
   });
 
   final CheckoutApi api;
@@ -61,15 +62,15 @@ class BasketScreen extends StatefulWidget {
   /// Paid StoreHub orders to scan items against. Null = no StoreHub orders button.
   final OrdersApi? orders;
 
-  /// Reads the receipt's barcode with the camera. Null = cancelled.
-  final Future<String?> Function(BuildContext context) barcodeScanner;
-
   /// Asks for the receipt as soon as the first items are read, so the cashier types it while the
   /// tags are checked in the background (the wait is hidden behind something useful).
   final bool askReceiptOnScan;
 
-  /// The USB RFID reader the Scan page drives (keyboard-mode readers need nothing).
+  /// The USB RFID reader the Scan page drives.
   final TagReader tagReader;
+
+  /// The store's tags kept on the tablet, so scanned pieces show their names at once. Null = none.
+  final StoreTags? storeTags;
 
   @override
   State<BasketScreen> createState() => _BasketScreenState();
@@ -107,6 +108,7 @@ class _BasketScreenState extends State<BasketScreen> {
     storeId: widget.storeId,
     staffName: widget.staffName,
     catalog: widget.catalog,
+    known: widget.storeTags,
   );
   final _receipt = TextEditingController();
   final _beeper = Beeper();
@@ -124,6 +126,7 @@ class _BasketScreenState extends State<BasketScreen> {
   @override
   void initState() {
     super.initState();
+    _basket.findByEnding = widget.orders != null; // today's StoreHub sales can be searched
     _basket.addListener(_onBasketChanged);
   }
 
@@ -222,14 +225,71 @@ class _BasketScreenState extends State<BasketScreen> {
     if (tags != null && tags.isNotEmpty) _basket.addText(tags.join(' '));
   }
 
-  /// Camera barcode → receipt box.
-  Future<void> _scanReceipt() async {
-    final value = await widget.barcodeScanner(context);
-    if (!mounted) return;
-    if (value != null) {
-      _receipt.text = value;
-      _basket.setReceipt(value);
+  /// The cashier typed the last 4 digits: find today's StoreHub sale that ends with them, among
+  /// the sales still waiting for their items (from the Altai server, which reads StoreHub).
+  Future<void> _findByEnding() async {
+    final end = _basket.receiptEnding;
+    final orders = widget.orders;
+    if (end == null || orders == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    List<StoreHubOrder> today;
+    try {
+      today = await orders.pending(widget.storeId);
+    } catch (_) {
+      messenger.showSnackBar(const SnackBar(content: Text("Could not load today's StoreHub sales. Type all 16 digits.")));
+      return;
     }
+    if (!mounted) return;
+    final now = DateTime.now();
+    final matches = [
+      for (final o in today)
+        if (CheckoutApi.cleanReceipt(o.invoiceNumber).endsWith(end) &&
+            o.paidAt.year == now.year &&
+            o.paidAt.month == now.month &&
+            o.paidAt.day == now.day)
+          o,
+    ]..sort((a, b) => b.paidAt.compareTo(a.paidAt)); // newest first: usually the customer here
+    StoreHubOrder? pick;
+    if (matches.isEmpty) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('No StoreHub sale today ending in $end. Check the iPad, or type all 16 digits.')),
+      );
+      return;
+    } else if (matches.length == 1) {
+      pick = matches.single;
+    } else {
+      pick = await _chooseSale(matches, end);
+    }
+    if (pick == null || !mounted) return;
+    final no = CheckoutApi.cleanReceipt(pick.invoiceNumber);
+    _receipt.text = no;
+    _basket.setReceipt(no);
+  }
+
+  /// Several of today's sales end in the same 4 digits: the cashier picks one.
+  Future<StoreHubOrder?> _chooseSale(List<StoreHubOrder> matches, String end) {
+    final c = context.altai;
+    String two(int v) => v.toString().padLeft(2, '0');
+    return showDialog<StoreHubOrder>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Sales today ending in $end', style: AltaiType.heading.copyWith(color: c.ink)),
+        children: [
+          for (final o in matches)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(o),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: D.space2),
+                child: Text(
+                  '${CheckoutApi.cleanReceipt(o.invoiceNumber)} · paid ${two(o.paidAt.hour)}:${two(o.paidAt.minute)} · '
+                  '${plural(o.totalQty, 'pc')}',
+                  style: AltaiType.body.copyWith(color: c.ink),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickNoReceipt() async {
@@ -279,6 +339,7 @@ class _BasketScreenState extends State<BasketScreen> {
         .push(
           MaterialPageRoute(
             builder: (_) => ReturnScreen(
+              tagReader: widget.tagReader,
               inspector: widget.api,
               api: returns,
               storeId: widget.storeId,
@@ -301,13 +362,13 @@ class _BasketScreenState extends State<BasketScreen> {
     final returned = await Navigator.of(context).push<ExchangeReturn>(
       MaterialPageRoute(
         builder: (_) => ReturnScreen(
+              tagReader: widget.tagReader,
           inspector: widget.api,
           api: returns,
           storeId: widget.storeId,
           storeName: widget.storeName,
           staffName: widget.staffName,
           catalog: widget.catalog,
-          barcodeScanner: widget.barcodeScanner,
           exchange: true,
         ),
       ),
@@ -328,6 +389,7 @@ class _BasketScreenState extends State<BasketScreen> {
         .push(
           MaterialPageRoute(
             builder: (_) => OrdersScreen(
+              tagReader: widget.tagReader,
               orders: orders,
               inspector: widget.api,
               storeId: widget.storeId,
@@ -460,7 +522,7 @@ class _BasketScreenState extends State<BasketScreen> {
                         Padding(
                           key: ValueKey('checking-${i.epc}'),
                           padding: const EdgeInsets.only(bottom: D.space2),
-                          child: _CheckingRow(epc: i.epc),
+                          child: _CheckingRow(item: i),
                         ),
                       if (checking > _maxPlaceholders)
                         Padding(
@@ -564,7 +626,7 @@ class _BasketScreenState extends State<BasketScreen> {
     );
   }
 
-  /// Which StoreHub sale this is: typed, scanned with a barcode gun (it types + Enter) or the camera.
+  /// Which StoreHub sale this is: the 16-digit receipt no., typed from the iPad.
   Widget _receiptBar(BuildContext context) {
     final c = context.altai;
     final reason = _basket.noReceiptReason;
@@ -602,15 +664,23 @@ class _BasketScreenState extends State<BasketScreen> {
             decoration: InputDecoration(
               isDense: true,
               labelText: 'StoreHub receipt no.',
-              hintText: 'Type it, or scan the barcode',
+              hintText: widget.orders == null ? '16 digits, from the iPad' : 'Last 4 digits, or all 16',
+              errorText: _basket.receiptCheck.error,
+              suffixIcon: _basket.receiptEnding == null
+                  ? null
+                  : Padding(
+                      padding: const EdgeInsets.only(right: D.space1),
+                      child: TextButton(onPressed: _findByEnding, child: const Text('Find')),
+                    ),
+              helperText: _basket.receiptCheck.warning,
+              helperStyle: AltaiType.caption.copyWith(color: c.warning),
               prefixIcon: const Icon(Icons.receipt_long_rounded),
-              suffixIcon: IconButton(
-                tooltip: 'Scan barcode with camera',
-                onPressed: _scanReceipt,
-                icon: const Icon(Icons.qr_code_scanner_rounded),
-              ),
             ),
+            keyboardType: TextInputType.number,
             onChanged: _basket.setReceipt,
+            onSubmitted: (_) {
+              if (_basket.receiptEnding != null) _findByEnding();
+            },
           ),
         ),
         const SizedBox(width: D.space2),
@@ -848,8 +918,10 @@ class _BasketScreenState extends State<BasketScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Everything above the buttons scrolls on a short screen; Back and Submit stay in view.
-                Flexible(
+                // The header stays put; only the item list below scrolls. Back and Submit stay in view.
+                // (On a very short screen the header can scroll too, instead of overflowing.)
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.45),
                   child: SingleChildScrollView(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -933,8 +1005,15 @@ class _BasketScreenState extends State<BasketScreen> {
                         ),
                         const SizedBox(height: D.space4),
                         Divider(color: c.border),
-                        Column(
-                          children: [
+                      ],
+                    ),
+                  ),
+                ),
+                Flexible(
+                  child: ListView(
+                    key: const ValueKey('confirm-items'),
+                    shrinkWrap: true,
+                    children: [
                             for (final l in lines)
                               for (final v in l.variants.values) ...[
                                 Padding(
@@ -968,10 +1047,7 @@ class _BasketScreenState extends State<BasketScreen> {
                                 ),
                                 Divider(height: 1, color: c.border),
                               ],
-                          ],
-                        ),
-                      ],
-                    ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: D.space4),
@@ -1036,28 +1112,47 @@ class _BasketScreenState extends State<BasketScreen> {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
         child: Padding(
-          padding: const EdgeInsets.all(D.space6),
+          padding: const EdgeInsets.all(D.space4),
           child: Column(
             children: [
-              StatusCircle(icon: Icons.check_rounded, color: c.brand, onColor: c.onBrand),
-              const SizedBox(height: D.space4),
-              Text('Good to go', style: AltaiType.title.copyWith(fontSize: 32, color: c.ink)),
-              const SizedBox(height: D.space1),
-              Text(
-                [
-                  '${plural(qty, 'pc')} across ${plural(_skuCount(lines), 'SKU')}',
-                  'Transaction ${_basket.trxId}',
-                  if (CheckoutApi.cleanReceipt(_basket.receiptNo) case final r when r.isNotEmpty) 'Receipt $r',
-                ].join(' · '),
-                style: AltaiType.body.copyWith(color: c.inkMuted),
-                textAlign: TextAlign.center,
+              // One compact header row, so the list below has room for 10+ items without scrolling.
+              Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(color: c.brand, shape: BoxShape.circle),
+                    child: Icon(Icons.check_rounded, size: 30, color: c.onBrand),
+                  ),
+                  const SizedBox(width: D.space3),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Good to go', style: AltaiType.title.copyWith(fontSize: 26, color: c.ink)),
+                        Text(
+                          [
+                            '${plural(qty, 'pc')} across ${plural(_skuCount(lines), 'SKU')}',
+                            'Transaction ${_basket.trxId}',
+                            if (CheckoutApi.cleanReceipt(_basket.receiptNo) case final r when r.isNotEmpty)
+                              'Receipt $r',
+                          ].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AltaiType.body.copyWith(color: c.inkMuted),
+                        ),
+                        Text(
+                          _exchangeDifference ?? 'Take payment on StoreHub as usual.',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AltaiType.bodyStrong.copyWith(color: c.ink),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              Text(
-                _exchangeDifference ?? 'Take payment on StoreHub as usual.',
-                style: AltaiType.body.copyWith(color: c.ink),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: D.space6),
+              const SizedBox(height: D.space3),
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
@@ -1073,10 +1168,11 @@ class _BasketScreenState extends State<BasketScreen> {
                       final (l, v) = variants[i];
                       final cents = _cents(v);
                       return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: D.space4, vertical: D.space2),
+                        key: ValueKey('done-${v.sku}'),
+                        padding: const EdgeInsets.symmetric(horizontal: D.space4, vertical: 2),
                         child: Row(
                           children: [
-                            ProductThumb(url: _basket.imageOf(v.first), size: 44),
+                            ProductThumb(url: _basket.imageOf(v.first), size: 30),
                             const SizedBox(width: D.space3),
                             Expanded(
                               child: Column(
@@ -1086,27 +1182,31 @@ class _BasketScreenState extends State<BasketScreen> {
                                     l.first.productName ?? v.sku,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: AltaiType.label.copyWith(fontSize: 16, color: c.ink),
+                                    style: AltaiType.label.copyWith(fontSize: 15, height: 1.2, color: c.ink),
                                   ),
                                   Text(
                                     [v.first.variation, 'SKU ${v.sku}'].whereType<String>().join(' · '),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: AltaiType.caption.copyWith(color: c.inkMuted),
+                                    style: AltaiType.caption.copyWith(fontSize: 12, height: 1.2, color: c.inkMuted),
                                   ),
                                 ],
                               ),
                             ),
-                            Text('× ${v.qty}', style: AltaiType.bodyStrong.copyWith(color: c.ink)),
+                            Text('× ${v.qty}', style: AltaiType.label.copyWith(fontSize: 16, fontWeight: FontWeight.w700, color: c.ink)),
                             if (_showPrices)
                               SizedBox(
                                 width: 120,
-                                child: Text(
-                                  cents == null ? 'No price' : 'RM ${formatRm(cents)}',
-                                  textAlign: TextAlign.end,
-                                  style: cents == null
-                                      ? AltaiType.caption.copyWith(color: c.warning)
-                                      : AltaiType.label.copyWith(fontSize: 16, color: c.ink),
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerRight,
+                                  child: Text(
+                                    cents == null ? 'No price' : 'RM ${formatRm(cents)}',
+                                    maxLines: 1,
+                                    style: cents == null
+                                        ? AltaiType.caption.copyWith(color: c.warning)
+                                        : AltaiType.label.copyWith(fontSize: 16, color: c.ink),
+                                  ),
                                 ),
                               ),
                           ],
@@ -1116,23 +1216,34 @@ class _BasketScreenState extends State<BasketScreen> {
                   ),
                 ),
               ),
-              if (_showPrices) ...[
-                const SizedBox(height: D.space4),
-                Row(
-                  children: [
+              const SizedBox(height: D.space3),
+              // Total and Next customer share one row: more room for the list.
+              Row(
+                children: [
+                  if (_showPrices) ...[
                     Text('Total', style: AltaiType.heading.copyWith(color: c.inkMuted)),
+                    const SizedBox(width: D.space3),
+                    Expanded(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'RM ${formatRm(_basket.totalCents)}',
+                          style: AltaiType.title.copyWith(color: c.ink),
+                        ),
+                      ),
+                    ),
+                  ] else
                     const Spacer(),
-                    Text('RM ${formatRm(_basket.totalCents)}', style: AltaiType.title.copyWith(color: c.ink)),
-                  ],
-                ),
-              ],
-              const SizedBox(height: D.space6),
-              AltaiButton(
-                'Next customer',
-                onPressed: _nextCustomer,
-                variant: AltaiButtonVariant.primary,
-                icon: Icons.qr_code_scanner_rounded,
-                large: true,
+                  const SizedBox(width: D.space3),
+                  AltaiButton(
+                    'Next customer',
+                    onPressed: _nextCustomer,
+                    variant: AltaiButtonVariant.primary,
+                    icon: Icons.person_add_alt_1_rounded,
+                    large: true,
+                  ),
+                ],
               ),
             ],
           ),
@@ -1253,9 +1364,9 @@ const _maxPlaceholders = 8;
 
 /// A piece that's read but not checked yet: its tag now, its name and price in a moment.
 class _CheckingRow extends StatelessWidget {
-  const _CheckingRow({required this.epc});
+  const _CheckingRow({required this.item});
 
-  final String epc;
+  final BasketItem item;
 
   @override
   Widget build(BuildContext context) {
@@ -1279,14 +1390,23 @@ class _CheckingRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 140,
-                  height: 12,
-                  decoration: BoxDecoration(color: c.surfaceSunken, borderRadius: BorderRadius.circular(D.radiusSm)),
-                ),
+                // Known from the store's list: the name now, the check's answer in a moment.
+                if (item.productName case final name?)
+                  Text(
+                    [name, ?item.variation].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AltaiType.bodyStrong.copyWith(color: c.ink),
+                  )
+                else
+                  Container(
+                    width: 140,
+                    height: 12,
+                    decoration: BoxDecoration(color: c.surfaceSunken, borderRadius: BorderRadius.circular(D.radiusSm)),
+                  ),
                 const SizedBox(height: D.space1),
                 Text(
-                  formatEpc(epc),
+                  formatEpc(item.epc),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AltaiType.epc.copyWith(fontSize: 12, color: c.inkMuted),

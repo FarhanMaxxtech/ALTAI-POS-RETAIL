@@ -16,12 +16,16 @@ class ScanPage extends StatefulWidget {
   const ScanPage({
     super.key,
     required this.reader,
+    this.target = 'basket',
     this.minRead = const Duration(seconds: 2),
     this.round = const Duration(milliseconds: 800),
   });
 
   /// The USB RFID reader.
   final TagReader reader;
+
+  /// Where the tags go, for the last button: "Add 3 to basket" / "to return" / "to order".
+  final String target;
 
   /// One read round of the USB reader.
   final Duration round;
@@ -315,7 +319,7 @@ class _ScanPageState extends State<ScanPage> {
     ],
     ScanPhase.done => [
       AltaiButton(
-        n == 0 ? 'Nothing read' : 'Add $n to basket',
+        n == 0 ? 'Nothing read' : 'Add $n to ${widget.target}',
         onPressed: n == 0
             ? null
             : () => Navigator.of(context).pop(_tags.toList()),

@@ -2,6 +2,7 @@ import 'package:altai_pos/core/api_client.dart';
 import 'package:altai_pos/features/checkout/data/checkout_api.dart';
 import 'package:altai_pos/features/checkout/domain/checkout_summary.dart';
 import 'package:altai_pos/features/checkout/presentation/basket_screen.dart';
+import 'package:altai_pos/features/orders/data/orders_api.dart';
 import 'package:altai_pos/shared/altai_theme.dart';
 import 'package:altai_pos/shared/altai_widgets.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/fake_tag_reader.dart';
 
 class FakeApi implements CheckoutApi {
+  @override
+  Future<({List<Map<String, dynamic>> rows, int total})> storeTagPage(
+    String storeId,
+    int page, {
+    int pageSize = 200,
+  }) async => (rows: const <Map<String, dynamic>>[], total: 0);
   Object? nextError;
   int sends = 0;
 
@@ -73,7 +80,7 @@ void main() {
 
   setUp(() => api = FakeApi());
 
-  Future<void> open(WidgetTester tester, {bool ask = false}) => tester.pumpWidget(
+  Future<void> open(WidgetTester tester, {bool ask = false, OrdersApi? orders}) => tester.pumpWidget(
     MaterialApp(
       theme: altaiTheme(Brightness.light),
       home: BasketScreen(
@@ -84,6 +91,7 @@ void main() {
         staffName: 'Aina',
         onLogout: () {},
         askReceiptOnScan: ask,
+        orders: orders,
       ),
     ),
   );
@@ -118,11 +126,11 @@ void main() {
       reason: 'no receipt yet',
     );
 
-    await receipt(tester, 'sh-0012');
+    await receipt(tester, '0022607201446208');
     await confirmAndSubmit(tester);
     expect(find.text('Good to go'), findsOneWidget);
     expect(find.textContaining('Transaction 501'), findsOneWidget);
-    expect(find.textContaining('Receipt SH-0012'), findsOneWidget);
+    expect(find.textContaining('Receipt 0022607201446208'), findsOneWidget);
     expect(api.sends, 1);
 
     await tester.tap(find.text('Next customer'));
@@ -133,7 +141,7 @@ void main() {
   testWidgets('no connection: says so, and Try again finishes the same basket', (tester) async {
     await open(tester);
     await scan(tester, 'E2801160000000A1');
-    await receipt(tester, 'SH-0012');
+    await receipt(tester, '0022607201446208');
     api.nextError = ApiException('Could not reach the server. Check the Wi-Fi.');
 
     await confirmAndSubmit(tester);
@@ -150,12 +158,12 @@ void main() {
       CheckoutSummary(
         createdAt: DateTime(2026, 11, 5, 14, 2, 11),
         trxId: '499',
-        remark: 'Altai POS · Aina · 14:02:11 · rcpt SH-0012 · ref x',
+        remark: 'Altai POS · Aina · 14:02:11 · rcpt 0022607201446208 · ref x',
       ),
     ];
     await open(tester);
     await scan(tester, 'E2801160000000A1');
-    await receipt(tester, 'SH-0012');
+    await receipt(tester, '0022607201446208');
     await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();
     expect(find.textContaining('already on transaction 499 at 14:02:11'), findsOneWidget);
@@ -171,5 +179,27 @@ void main() {
     expect(find.text('No receipt: StoreHub offline'), findsOneWidget);
     await confirmAndSubmit(tester);
     expect(find.text('Good to go'), findsOneWidget);
+  });
+
+  testWidgets('receipt: type the last 4 digits, Find fills in today\'s StoreHub sale', (tester) async {
+    final orders = FakeOrdersApi(delay: Duration.zero);
+    await tester.runAsync(() => orders.pending('12')); // today's demo sales
+    final full = orders.all[1].invoiceNumber; // 16 digits
+    final end = full.substring(12);
+    await open(tester, orders: orders);
+
+    await receipt(tester, end);
+    expect(find.text("Tap Find to look up today's StoreHub sale ending in $end."), findsOneWidget);
+    await tester.tap(find.text('Find'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(textBox('StoreHub receipt no.')).controller!.text, full);
+    expect(find.text('Find'), findsNothing);
+
+    // No sale today ends like this: says so, the box stays as typed.
+    await receipt(tester, '0000');
+    await tester.tap(find.text('Find'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('No StoreHub sale today ending in 0000'), findsOneWidget);
+    expect(tester.widget<TextField>(textBox('StoreHub receipt no.')).controller!.text, '0000');
   });
 }

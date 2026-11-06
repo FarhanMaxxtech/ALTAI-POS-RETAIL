@@ -15,6 +15,12 @@ import 'returns_test.dart' show FakeTeam;
 
 /// Tags starting with A are a Classic Tee (RM 49.90), with B a pair of jeans (RM 59.90).
 class FakeApi implements CheckoutApi {
+  @override
+  Future<({List<Map<String, dynamic>> rows, int total})> storeTagPage(
+    String storeId,
+    int page, {
+    int pageSize = 200,
+  }) async => (rows: const <Map<String, dynamic>>[], total: 0);
   String? receiptNo;
   String? exchangeFor;
 
@@ -109,24 +115,17 @@ void main() {
           storeName: 'MidValley',
           staffName: 'Aina',
           onLogout: () {},
-          barcodeScanner: (_) async => null,
         ),
       ),
     );
-
-    Future<void> scanInto(String box, String epc) async {
-      await tester.enterText(textBox(box), epc);
-      await tester.testTextInput.receiveAction(TextInputAction.done);
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
-    }
 
     // Step 1: the return.
     await tester.tap(find.byTooltip('Exchange'));
     await tester.pumpAndSettle();
     expect(find.text('Exchange · 1 of 2: items back'), findsOneWidget);
-    await tester.enterText(textBox('StoreHub receipt no., order no. or ID'), 'R-1042');
-    await scanInto('Items coming back', 'A2801160000000A1');
+    await tester.enterText(textBox('StoreHub receipt no., order no. or ID'), '0022607201446208');
+    await scanWithReader(tester, reader, ['A2801160000000A1']);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Wrong size'));
     await tester.pump();
     await tester.tap(find.text('Return & next'));
@@ -145,13 +144,13 @@ void main() {
 
     await tester.tap(find.text('Confirm & submit'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Exchange: 1 pc already back in stock from receipt R-1042'), findsOneWidget);
+    expect(find.textContaining('Exchange: 1 pc already back in stock from receipt 0022607201446208'), findsOneWidget);
     await tester.tap(find.text('Submit'));
     await tester.pumpAndSettle();
 
     expect(find.text('Good to go'), findsOneWidget);
     expect(find.text('Customer pays RM 10.00 more on StoreHub'), findsOneWidget);
-    expect((api.receiptNo, api.exchangeFor), ('R-1042', 'R-1042'));
+    expect((api.receiptNo, api.exchangeFor), ('0022607201446208', '0022607201446208'));
 
     await tester.tap(find.text('Next customer'));
     await tester.pumpAndSettle();

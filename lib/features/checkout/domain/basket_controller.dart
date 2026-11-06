@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/api_client.dart';
 import '../data/checkout_api.dart';
+import '../data/store_tags.dart';
 import 'basket.dart';
+import 'receipt_no.dart';
 import 'checkout_summary.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../returns/domain/exchange.dart';
@@ -31,8 +33,13 @@ class BasketController extends ChangeNotifier {
     required this.storeId,
     this.staffName = '',
     this.catalog,
+    this.known,
     this.checkDelay = const Duration(milliseconds: 250),
-  }) : _clientRef = newClientRef();
+    DateTime Function()? clock,
+  }) : _clientRef = newClientRef(),
+       _clock = clock ?? DateTime.now;
+
+  final DateTime Function() _clock;
 
   static const maxItems = 200;
 
@@ -40,6 +47,8 @@ class BasketController extends ChangeNotifier {
   final String storeId;
   final String staffName; // saved in the remark of each sale
   final Duration checkDelay; // readers send tags in bursts, so wait and check them together
+  /// The store's tags kept on the tablet (names shown at once). Null = none.
+  final StoreTags? known;
   final CatalogApi? catalog;
   final Map<String, SkuInfo> _info = {}; // sku → picture + team price
 
@@ -72,7 +81,26 @@ class BasketController extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool get hasReceipt => CheckoutApi.cleanReceipt(receiptNo).isNotEmpty || noReceiptReason != null;
+  /// True when today's StoreHub sales can be searched, so the cashier may type only the last 4 digits.
+  bool findByEnding = false;
+
+  /// The last 4 digits typed, waiting for Find. Null otherwise.
+  String? get receiptEnding {
+    final no = receiptNo.replaceAll(RegExp(r'\s'), '');
+    return findByEnding && noReceiptReason == null && RegExp(r'^\d{4}$').hasMatch(no) ? no : null;
+  }
+
+  /// Is the typed receipt no. a StoreHub one? See [checkReceiptNo].
+  ({String? error, String? warning}) get receiptCheck {
+    if (noReceiptReason != null) return (error: null, warning: null);
+    if (receiptEnding case final end?) {
+      return (error: "Tap Find to look up today's StoreHub sale ending in $end.", warning: null);
+    }
+    return checkReceiptNo(receiptNo, _clock());
+  }
+
+  bool get hasReceipt =>
+      noReceiptReason != null || (CheckoutApi.cleanReceipt(receiptNo).isNotEmpty && receiptCheck.error == null);
 
   List<BasketItem> get items => _items.values.toList(growable: false);
   int get okCount => _items.values.where((i) => i.state == ItemState.ok).length;
@@ -89,7 +117,7 @@ class BasketController extends ChangeNotifier {
   String? get missing {
     if (_items.isEmpty) return null;
     if (hasProblems) return 'Remove or re-check the red tags to continue.';
-    if (!hasReceipt) return 'Enter or scan the StoreHub receipt number.';
+    if (!hasReceipt) return receiptCheck.error ?? 'Enter the StoreHub receipt number.';
     return null;
   }
 
@@ -141,7 +169,15 @@ class BasketController extends ChangeNotifier {
         full = true;
         break;
       }
-      _items[epc] = BasketItem(epc);
+      // A tag the store's list knows shows its name at once; the check below still decides.
+      final k = known?[epc];
+      _items[epc] = BasketItem(
+        epc,
+        productName: k?.productName,
+        productCode: k?.productCode,
+        variation: k?.variation,
+        sku: k?.sku,
+      );
       added++;
     }
     message = full
@@ -149,7 +185,10 @@ class BasketController extends ChangeNotifier {
         : parsed.invalid > 0
         ? '${parsed.invalid} entry not recognised as a tag.'
         : null;
-    if (added > 0) _scheduleCheck();
+    if (added > 0) {
+      _scheduleCheck();
+      if (known != null) _loadCatalog();
+    }
     notifyListeners();
   }
 
@@ -243,7 +282,8 @@ class BasketController extends ChangeNotifier {
     final generation = _generation;
     final skus = {
       for (final i in _items.values)
-        if (i.state == ItemState.ok && i.sku != null && !_info.containsKey(i.sku) && !_loading.contains(i.sku)) i.sku!,
+        // Ready items, and still-checking ones the store's list already named: the price is there when the check ends.
+        if (i.state != ItemState.problem && i.sku != null && !_info.containsKey(i.sku) && !_loading.contains(i.sku)) i.sku!,
     };
     _loading.addAll(skus);
     await Future.wait([

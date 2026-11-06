@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
+import '../../../shared/rfid_reader.dart';
+import '../../checkout/presentation/scan_page.dart';
 import '../../checkout/data/checkout_api.dart';
-import '../../checkout/domain/basket.dart';
 import '../data/orders_api.dart';
 import '../domain/order.dart';
 import 'order_scan_screen.dart';
@@ -21,7 +22,11 @@ class OrdersScreen extends StatefulWidget {
     required this.storeName,
     required this.staffName,
     this.refreshEvery = const Duration(seconds: 10),
+    this.tagReader = const UsbTagReader(),
   });
+
+  /// The USB RFID reader the Scan page drives.
+  final TagReader tagReader;
 
   final OrdersApi orders;
   final CheckoutApi inspector;
@@ -75,6 +80,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           orders: widget.orders,
           storeId: widget.storeId,
           staffName: widget.staffName,
+          tagReader: widget.tagReader,
         ),
       ),
     );
@@ -86,7 +92,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Future<void> _demoFromTags(FakeOrdersApi fake) async {
     final order = await showDialog<StoreHubOrder>(
       context: context,
-      builder: (_) => _DemoOrderDialog(fake: fake, inspector: widget.inspector, storeId: widget.storeId),
+      builder: (_) => _DemoOrderDialog(
+        fake: fake,
+        inspector: widget.inspector,
+        storeId: widget.storeId,
+        tagReader: widget.tagReader,
+      ),
     );
     if (order != null) await _load();
   }
@@ -219,34 +230,32 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
 /// Demo only: read some real tags and make an order of them, to try the matching with real items.
 class _DemoOrderDialog extends StatefulWidget {
-  const _DemoOrderDialog({required this.fake, required this.inspector, required this.storeId});
+  const _DemoOrderDialog({
+    required this.fake,
+    required this.inspector,
+    required this.storeId,
+    required this.tagReader,
+  });
 
   final FakeOrdersApi fake;
   final CheckoutApi inspector;
   final String storeId;
+  final TagReader tagReader;
 
   @override
   State<_DemoOrderDialog> createState() => _DemoOrderDialogState();
 }
 
 class _DemoOrderDialogState extends State<_DemoOrderDialog> {
-  final _input = TextEditingController();
-  final _focus = FocusNode();
   final Set<String> _tags = {};
   bool _busy = false;
   String? _error;
 
-  @override
-  void dispose() {
-    _input.dispose();
-    _focus.dispose();
-    super.dispose();
-  }
-
-  void _add([String? _]) {
-    setState(() => _tags.addAll(parseTags(_input.text).epcs));
-    _input.clear();
-    _focus.requestFocus();
+  Future<void> _scan() async {
+    final tags = await Navigator.of(context).push<List<String>>(
+      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, target: 'demo order')),
+    );
+    if (tags != null && mounted) setState(() => _tags.addAll(tags));
   }
 
   Future<void> _create() async {
@@ -299,13 +308,11 @@ class _DemoOrderDialogState extends State<_DemoOrderDialog> {
               style: AltaiType.caption.copyWith(color: c.inkMuted),
             ),
             const SizedBox(height: D.space3),
-            TextField(
-              controller: _input,
-              focusNode: _focus,
-              autofocus: true,
-              keyboardType: TextInputType.none,
-              decoration: const InputDecoration(hintText: 'Scan tags for the demo order', isDense: true),
-              onSubmitted: _add,
+            AltaiButton(
+              'Scan items',
+              onPressed: _busy ? null : _scan,
+              variant: AltaiButtonVariant.primary,
+              icon: Icons.sensors_rounded,
             ),
             const SizedBox(height: D.space2),
             Text('${plural(_tags.length, 'tag')} read', style: AltaiType.label.copyWith(color: c.ink)),

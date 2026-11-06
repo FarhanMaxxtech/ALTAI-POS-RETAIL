@@ -80,7 +80,7 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
   /// The Scan page: the order's items on the reader, Scan, and they all come back here.
   Future<void> _scanItems() async {
     final tags = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, target: 'order')),
+      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, inspector: widget.inspector, target: 'order')),
     );
     if (!mounted) return;
     if (tags != null && tags.isNotEmpty) _scan.addText(tags.join(' '));

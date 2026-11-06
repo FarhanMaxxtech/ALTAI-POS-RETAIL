@@ -5,33 +5,44 @@ import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
 import '../../../shared/rfid_reader.dart';
+import '../data/checkout_api.dart';
+import '../data/store_tags.dart';
 
 enum ScanPhase { ready, reading, done }
 
-/// Put the items on the reader, press Scan, and every tag is read in one go.
+/// Put the items on the reader, press Scan, and every tag is read.
 ///
-/// The app tells the USB reader ([reader]) to read, round after round, until a couple of rounds
-/// bring nothing new. Returns the tags read (null = cancelled).
+/// Scan starts the reader and it keeps reading until the cashier taps the same button again (Stop
+/// scanning), so items can be added while it runs. Scans add up: Scan again adds its new tags to the
+/// list (a tag read twice counts once). Remove all empties the list.
+/// Returns the tags read (null = cancelled).
 class ScanPage extends StatefulWidget {
   const ScanPage({
     super.key,
     required this.reader,
+    this.known,
+    this.inspector,
     this.target = 'basket',
-    this.minRead = const Duration(seconds: 2),
+    this.title = 'Scan items',
     this.round = const Duration(milliseconds: 800),
   });
 
   /// The USB RFID reader.
   final TagReader reader;
 
+  /// The store's tags kept on the tablet: shows each scanned tag's product. Null = EPCs only.
+  final StoreTags? known;
+
+  /// Asks the server about tags the store's list doesn't know, to show their product. Null = don't.
+  final CheckoutApi? inspector;
+
   /// Where the tags go, for the last button: "Add 3 to basket" / "to return" / "to order".
   final String target;
 
-  /// One read round of the USB reader.
-  final Duration round;
+  final String title;
 
-  /// Reading lasts at least this long after Scan is pressed.
-  final Duration minRead;
+  /// One read round of the USB reader (it reads round after round until stopped).
+  final Duration round;
 
   @override
   State<ScanPage> createState() => _ScanPageState();
@@ -39,8 +50,11 @@ class ScanPage extends StatefulWidget {
 
 class _ScanPageState extends State<ScanPage> {
   final _beeper = Beeper();
-  final Set<String> _tags = {}; // in the order read
+  final List<String> _tags = []; // in the order read, newest last
+  final Map<String, KnownTag> _looked = {}; // what the server said about tags the list didn't know
+  final Set<String> _asking = {}; // being looked up
   ScanPhase _phase = ScanPhase.ready;
+  int _run = 0; // which reading loop is the current one (a quick Stop then Scan starts a new one)
   ReaderState _usb = ReaderState.none;
   String? _error;
 
@@ -48,6 +62,12 @@ class _ScanPageState extends State<ScanPage> {
   void initState() {
     super.initState();
     _checkReader();
+  }
+
+  @override
+  void dispose() {
+    _beeper.dispose();
+    super.dispose();
   }
 
   Future<void> _checkReader() async {
@@ -60,116 +80,135 @@ class _ScanPageState extends State<ScanPage> {
     if (!mounted) return;
     await _checkReader();
     if (!ok && mounted) {
-      setState(
-        () => _error = 'The reader was not allowed. Tap Allow to try again.',
-      );
+      setState(() => _error = 'The reader was not allowed. Tap Allow to try again.');
     }
   }
 
-  /// USB reader: read round after round; stop after the minimum time once 2 rounds found nothing new.
-  Future<void> _usbLoop() async {
-    final reader = widget.reader;
-    // Read time so far, counted in rounds (each round is one read of widget.round).
-    var readTime = Duration.zero;
-    var quietRounds = 0;
-    while (mounted && _phase == ScanPhase.reading) {
-      List<String> got;
-      try {
-        got = await reader.read(widget.round);
-        readTime += widget.round;
-      } on ReaderException catch (e) {
-        if (!mounted) return;
-        setState(() => _error = e.message);
-        _finish();
-        _checkReader();
-        return;
-      }
-      if (!mounted) return;
-      final added = _add(got); // keep what the last round read, even after Stop
-      if (_phase != ScanPhase.reading) return;
-      quietRounds = added ? 0 : quietRounds + 1;
-      if (quietRounds >= 2 && readTime >= widget.minRead) _finish();
-    }
-  }
-
-  /// Adds new tags; true if any was new.
-  bool _add(Iterable<String> epcs) {
-    final fresh = [
-      for (final e in epcs)
-        if (!_tags.contains(e)) e,
-    ];
-    if (fresh.isEmpty) return false;
-    HapticFeedback.lightImpact();
-    _beeper.ok();
-    setState(() => _tags.addAll(fresh));
-    return true;
-  }
-
-  @override
-  void dispose() {
-    _beeper.dispose();
-    super.dispose();
-  }
-
-  Future<void> _scan({bool fresh = false}) async {
+  /// Reads another batch. New tags are added to the list; nothing is replaced.
+  Future<void> _scan() async {
     if (_usb != ReaderState.ready) {
       if (_usb == ReaderState.needsPermission) await _allowReader();
       if (_usb == ReaderState.none) await _checkReader();
       if (!mounted) return;
       if (_usb != ReaderState.ready) {
-        setState(
-          () => _error =
-              'No RFID reader. Plug the reader into the tablet, then tap Look again.',
-        );
+        setState(() => _error = 'No RFID reader. Plug the reader into the tablet, then tap Look again.');
         return;
       }
     }
     setState(() {
-      if (fresh) _tags.clear();
       _error = null;
       _phase = ScanPhase.reading;
     });
     _usbLoop();
   }
 
-  void _finish() {
+  /// Read round after round until the cashier taps Stop scanning (or leaves the page).
+  Future<void> _usbLoop() async {
+    final run = ++_run;
+    while (mounted && _phase == ScanPhase.reading && run == _run) {
+      List<String> got;
+      try {
+        got = await widget.reader.read(widget.round);
+      } on ReaderException catch (e) {
+        if (!mounted || run != _run) return;
+        setState(() => _error = e.message);
+        _stop();
+        _checkReader();
+        return;
+      }
+      if (!mounted) return;
+      _add(got); // keep what the last round read, even after Stop scanning
+    }
+  }
+
+  /// Adds new tags; true if any was new.
+  bool _add(Iterable<String> epcs) {
+    final fresh = [
+      for (final e in epcs.toSet())
+        if (!_tags.contains(e)) e,
+    ];
+    if (fresh.isEmpty) return false;
+    HapticFeedback.lightImpact();
+    _beeper.ok();
+    setState(() => _tags.addAll(fresh));
+    _lookUp(fresh);
+    return true;
+  }
+
+  void _stop() {
     if (mounted) setState(() => _phase = ScanPhase.done);
+  }
+
+  Future<void> _removeAll() async {
+    final c = context.altai;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remove all ${_tags.length} scanned tags?', style: AltaiType.heading.copyWith(color: c.ink)),
+        content: Text(
+          'The list is emptied. Nothing has been sold or changed yet.',
+          style: AltaiType.body.copyWith(color: c.inkMuted),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove all')),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      setState(() {
+        _tags.clear();
+        _looked.clear();
+        _phase = ScanPhase.ready;
+        _error = null;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final n = _tags.length;
+    final c = context.altai;
+    final controls = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _readerLine(context),
+        const SizedBox(height: D.space4),
+        _count(context),
+        const SizedBox(height: D.space6),
+        ..._buttons(),
+        if (_error case final e?) ...[const SizedBox(height: D.space4), AltaiNotice(e, warning: true)],
+      ],
+    );
     return Scaffold(
-      appBar: AltaiAppBar(
-        title: 'Scan items',
-        onBack: () => Navigator.of(context).pop(),
-      ),
-      body: Center(
-        // Scrolls on a short screen (portrait with a small window, big text).
-        child: SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560),
-            child: Padding(
-              padding: const EdgeInsets.all(D.space6),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _readerLine(context),
-                  const SizedBox(height: D.space4),
-                  _steps(context),
-                  const SizedBox(height: D.space6),
-                  _status(context, n),
-                  const SizedBox(height: D.space6),
-                  ..._buttons(n),
-                  if (_error case final e?) ...[
-                    const SizedBox(height: D.space4),
-                    AltaiNotice(e, warning: true),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
+      appBar: AltaiAppBar(title: widget.title, onBack: () => Navigator.of(context).pop()),
+      body: LayoutBuilder(
+        builder: (context, box) {
+          final wide = box.maxWidth >= 800;
+          final list = _tagList(context);
+          if (wide) {
+            // Landscape: buttons on the left, the scanned tags on the right.
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  width: 380,
+                  child: SingleChildScrollView(padding: const EdgeInsets.all(D.space6), child: controls),
+                ),
+                VerticalDivider(width: 1, color: c.border),
+                Expanded(child: list),
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(padding: const EdgeInsets.all(D.space4), child: controls),
+              Divider(height: 1, color: c.border),
+              Expanded(child: list),
+            ],
+          );
+        },
       ),
     );
   }
@@ -178,163 +217,236 @@ class _ScanPageState extends State<ScanPage> {
   Widget _readerLine(BuildContext context) {
     final c = context.altai;
     final (icon, text, color) = switch (_usb) {
-      ReaderState.ready => (
-        Icons.usb_rounded,
-        'USB reader connected',
-        c.brandInk,
-      ),
-      ReaderState.needsPermission => (
-        Icons.usb_rounded,
-        'USB reader found: allow the app to use it',
-        c.warning,
-      ),
-      ReaderState.none => (
-        Icons.usb_off_rounded,
-        'No RFID reader plugged in',
-        c.warning,
-      ),
+      ReaderState.ready => (Icons.usb_rounded, 'USB reader connected', c.brandInk),
+      ReaderState.needsPermission => (Icons.usb_rounded, 'USB reader found: allow the app to use it', c.warning),
+      ReaderState.none => (Icons.usb_off_rounded, 'No RFID reader plugged in', c.warning),
     };
     return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(icon, size: 18, color: color),
         const SizedBox(width: D.space2),
-        Flexible(
-          child: Text(text, style: AltaiType.caption.copyWith(color: color)),
-        ),
-        if (_usb == ReaderState.needsPermission)
-          TextButton(onPressed: _allowReader, child: const Text('Allow')),
-        if (_usb == ReaderState.none)
-          TextButton(onPressed: _checkReader, child: const Text('Look again')),
+        Flexible(child: Text(text, style: AltaiType.caption.copyWith(color: color))),
+        if (_usb == ReaderState.needsPermission) TextButton(onPressed: _allowReader, child: const Text('Allow')),
+        if (_usb == ReaderState.none) TextButton(onPressed: _checkReader, child: const Text('Look again')),
       ],
     );
   }
 
-  Widget _steps(BuildContext context) {
+  Widget _count(BuildContext context) {
     final c = context.altai;
-    Widget step(String no, String text, bool on) => Row(
-      children: [
-        CircleAvatar(
-          radius: 14,
-          backgroundColor: on ? c.brand : c.surfaceSunken,
-          child: Text(
-            no,
-            style: AltaiType.label.copyWith(color: on ? c.onBrand : c.inkMuted),
-          ),
-        ),
-        const SizedBox(width: D.space3),
-        Expanded(
-          child: Text(
-            text,
-            style: AltaiType.body.copyWith(color: on ? c.ink : c.inkMuted),
-          ),
-        ),
-      ],
-    );
-    return Column(
-      children: [
-        step('1', 'Put all the items on the reader', _phase == ScanPhase.ready),
-        const SizedBox(height: D.space2),
-        step(
-          '2',
-          'Press Scan and keep them there',
-          _phase == ScanPhase.reading,
-        ),
-        const SizedBox(height: D.space2),
-        step(
-          '3',
-          'Check the count, then add them to the basket',
-          _phase == ScanPhase.done,
-        ),
-      ],
-    );
-  }
-
-  Widget _status(BuildContext context, int n) {
-    final c = context.altai;
+    final n = _tags.length;
     final caption = switch (_phase) {
-      ScanPhase.ready =>
-        n == 0
-            ? 'Nothing read yet'
-            : 'already read, press Scan to read the rest',
-      ScanPhase.reading => 'Reading… keep the items on the reader',
-      ScanPhase.done => 'Done reading',
+      ScanPhase.ready => n == 0 ? 'Put the items on the reader, then tap Scan.' : 'Tap Scan to read more.',
+      ScanPhase.reading => 'Scanning… add or move items. Tap Stop scanning when all are read.',
+      ScanPhase.done => 'Done. Scan again to add more items.',
     };
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '$n',
-          key: const ValueKey('scan-count'),
-          style: AltaiType.qtyTotal.copyWith(
-            fontSize: 72,
-            height: 1,
-            color: c.brandInk,
-          ),
-        ),
-        Text(
-          n == 1 ? 'pc' : 'pcs',
-          style: AltaiType.label.copyWith(color: c.ink),
-        ),
-        const SizedBox(height: D.space3),
         Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            if (_phase == ScanPhase.reading) ...[
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: D.space2),
-            ],
-            if (_phase == ScanPhase.done) ...[
-              Icon(Icons.check_circle_rounded, color: c.brandInk, size: 20),
-              const SizedBox(width: D.space2),
-            ],
+            Text(
+              '$n',
+              key: const ValueKey('scan-count'),
+              style: AltaiType.qtyTotal.copyWith(fontSize: 72, height: 1, color: c.brandInk),
+            ),
+            const SizedBox(width: D.space2),
             Flexible(
-              child: Text(
-                caption,
-                style: AltaiType.body.copyWith(color: c.inkMuted),
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: D.space2),
+                child: Text(n == 1 ? 'pc scanned' : 'pcs scanned', style: AltaiType.label.copyWith(color: c.ink)),
               ),
             ),
           ],
         ),
+        const SizedBox(height: D.space2),
+        Text(caption, style: AltaiType.body.copyWith(color: c.inkMuted)),
       ],
     );
   }
 
-  List<Widget> _buttons(int n) => switch (_phase) {
-    ScanPhase.ready => [
-      AltaiButton(
-        'Scan',
-        onPressed: _scan,
-        variant: AltaiButtonVariant.primary,
-        icon: Icons.sensors_rounded,
-        large: true,
-        expand: true,
-      ),
-    ],
-    ScanPhase.reading => [
-      AltaiButton('Stop', onPressed: _finish, large: true, expand: true),
-    ],
-    ScanPhase.done => [
-      AltaiButton(
-        n == 0 ? 'Nothing read' : 'Add $n to ${widget.target}',
-        onPressed: n == 0
-            ? null
-            : () => Navigator.of(context).pop(_tags.toList()),
-        variant: AltaiButtonVariant.primary,
-        icon: Icons.add_shopping_cart_rounded,
-        large: true,
-        expand: true,
-      ),
-      const SizedBox(height: D.space3),
-      AltaiButton(
-        'Scan again',
-        onPressed: () => _scan(fresh: true),
-        icon: Icons.refresh_rounded,
-        expand: true,
-      ),
-    ],
-  };
+  List<Widget> _buttons() {
+    final n = _tags.length;
+    final reading = _phase == ScanPhase.reading;
+    return [
+      if (reading) ...[
+        // The same button: it spins while the reader runs; tapping it stops the scan.
+        AltaiButton(
+          'Stop scanning',
+          onPressed: _stop,
+          loading: true,
+          variant: AltaiButtonVariant.primary,
+          large: true,
+          expand: true,
+        ),
+      ] else if (n == 0) ...[
+        AltaiButton(
+          'Scan',
+          onPressed: _scan,
+          variant: AltaiButtonVariant.primary,
+          icon: Icons.sensors_rounded,
+          large: true,
+          expand: true,
+        ),
+      ] else ...[
+        // Done: the scan button becomes Remove all; Scan again adds another batch.
+        AltaiButton(
+          'Add $n to ${widget.target}',
+          onPressed: () => Navigator.of(context).pop(List<String>.of(_tags)),
+          variant: AltaiButtonVariant.primary,
+          icon: Icons.arrow_forward_rounded,
+          large: true,
+          expand: true,
+        ),
+        const SizedBox(height: D.space3),
+        AltaiButton('Scan again', onPressed: _scan, icon: Icons.sensors_rounded, large: true, expand: true),
+        const SizedBox(height: D.space2),
+        AltaiButton(
+          'Remove all',
+          onPressed: _removeAll,
+          variant: AltaiButtonVariant.ghost,
+          icon: Icons.delete_sweep_rounded,
+          expand: true,
+        ),
+      ],
+    ];
+  }
+
+  /// What each scanned tag is: from the store's list, else from the server. Null = not known yet.
+  KnownTag? _what(String epc) => widget.known?[epc] ?? _looked[epc];
+
+  /// Asks the server about tags the store's list doesn't know (e.g. sold or moved since it loaded).
+  Future<void> _lookUp(List<String> epcs) async {
+    final inspector = widget.inspector;
+    if (inspector == null) return;
+    final ask = [
+      for (final e in epcs)
+        if (widget.known?[e] == null && !_looked.containsKey(e) && !_asking.contains(e)) e,
+    ];
+    if (ask.isEmpty) return;
+    _asking.addAll(ask);
+    for (var i = 0; i < ask.length; i += CheckoutApi.inspectLimit) {
+      final batch = ask.sublist(i, (i + CheckoutApi.inspectLimit).clamp(0, ask.length));
+      try {
+        await inspector.inspect(
+          batch,
+          onEach: (t) {
+            if (!mounted) return;
+            final epc = t['epc'] as String;
+            setState(() {
+              _asking.remove(epc);
+              _looked[epc] = t['found'] == true
+                  ? KnownTag(
+                      sku: t['sku'] as String?,
+                      productName: t['product_name'] as String?,
+                      productCode: t['product_code'] as String?,
+                      variation: t['variation'] as String?,
+                    )
+                  : const KnownTag(); // no product: shown as an unknown tag
+            });
+          },
+        );
+      } catch (_) {
+        // No answer: those rows stay "Looking up…"; the checkout checks every tag again anyway.
+      }
+      if (mounted) setState(() => _asking.removeAll(batch));
+    }
+  }
+
+  /// The scanned tags as product rows (same SKU together, with a quantity), newest first.
+  Widget _tagList(BuildContext context) {
+    final c = context.altai;
+    if (_tags.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(D.space6),
+          child: Text(
+            'Scanned items show here.',
+            style: AltaiType.body.copyWith(color: c.inkMuted),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    // Group: one row per SKU; a tag not known yet (or with no product) gets its own row.
+    final groups = <String, ({KnownTag? what, String epc, int qty})>{};
+    for (final epc in _tags.reversed) {
+      final w = _what(epc);
+      final key = w?.sku ?? w?.productName ?? 'epc:$epc';
+      final g = groups[key];
+      groups[key] = (what: w, epc: g?.epc ?? epc, qty: (g?.qty ?? 0) + 1);
+    }
+    final rows = groups.values.toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(D.space4, D.space4, D.space4, D.space2),
+          child: Text(
+            'SCANNED ITEMS (${_tags.length})',
+            style: AltaiType.label.copyWith(color: c.inkMuted),
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.fromLTRB(D.space4, 0, D.space4, D.space4),
+            itemCount: rows.length,
+            separatorBuilder: (_, _) => Divider(height: 1, color: c.border),
+            itemBuilder: (context, i) {
+              final r = rows[i];
+              final name = r.what?.productName;
+              final looking = r.what == null && _asking.contains(r.epc);
+              final title =
+                  name ??
+                  (looking
+                      ? 'Looking up…'
+                      : r.what == null
+                      ? formatEpc(r.epc) // could not be looked up: the tag itself
+                      : 'Unknown tag: no product');
+              final sub = name == null ? null : (r.what?.variation ?? r.what?.sku);
+              return Padding(
+                key: ValueKey('scanned-${r.what?.sku ?? r.epc}'),
+                padding: const EdgeInsets.symmetric(vertical: D.space2),
+                child: Row(
+                  children: [
+                    Icon(
+                      name == null ? Icons.sell_outlined : Icons.checkroom_rounded,
+                      size: 22,
+                      color: name == null ? c.inkMuted : c.brandInk,
+                    ),
+                    const SizedBox(width: D.space3),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AltaiType.label.copyWith(
+                              fontSize: 16,
+                              color: name == null ? c.inkMuted : c.ink,
+                            ),
+                          ),
+                          if (sub != null)
+                            Text(
+                              sub,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AltaiType.caption.copyWith(color: c.inkMuted),
+                            ),
+                        ],
+                      ),
+                    ),
+                    Text('× ${r.qty}', style: AltaiType.bodyStrong.copyWith(color: c.ink)),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }

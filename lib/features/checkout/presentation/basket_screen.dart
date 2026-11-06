@@ -34,7 +34,9 @@ class BasketScreen extends StatefulWidget {
     required this.storeId,
     required this.storeName,
     required this.staffName,
-    required this.onLogout,
+    this.onLogout,
+    this.onBack,
+    this.initialTags = const [],
     this.onChangeStore,
     this.catalog,
     this.returns,
@@ -48,7 +50,15 @@ class BasketScreen extends StatefulWidget {
   final String storeId;
   final String storeName;
   final String staffName;
-  final VoidCallback onLogout;
+
+  /// Log out from here. Null = no Log out button (it's on the start page).
+  final VoidCallback? onLogout;
+
+  /// Back to the start page. Null = this is the first screen. Next customer goes back there too.
+  final VoidCallback? onBack;
+
+  /// Tags already scanned on the start page's Scan for Checkout: in the basket from the start.
+  final List<String> initialTags;
 
   /// Back to the store list (staying logged in). Null = the store can't be changed here.
   final VoidCallback? onChangeStore;
@@ -128,6 +138,33 @@ class _BasketScreenState extends State<BasketScreen> {
     super.initState();
     _basket.findByEnding = widget.orders != null; // today's StoreHub sales can be searched
     _basket.addListener(_onBasketChanged);
+    if (widget.initialTags.isNotEmpty) _basket.addText(widget.initialTags.join(' '));
+  }
+
+  /// Back to the start page. Scanned items not yet sold are cleared, so ask first.
+  Future<void> _leave() async {
+    final back = widget.onBack;
+    if (back == null) return;
+    if (_basket.phase == BasketPhase.sending) return; // recording the sale: wait for it
+    if (_basket.phase == BasketPhase.scanning && _basket.items.isNotEmpty) {
+      final c = context.altai;
+      final leave = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Leave this checkout?', style: AltaiType.heading.copyWith(color: c.ink)),
+          content: Text(
+            'The ${plural(_basket.items.length, 'scanned item')} will be cleared. Nothing has been sold.',
+            style: AltaiType.body.copyWith(color: c.inkMuted),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Stay')),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Leave')),
+          ],
+        ),
+      );
+      if (leave != true || !mounted) return;
+    }
+    back();
   }
 
   @override
@@ -220,7 +257,9 @@ class _BasketScreenState extends State<BasketScreen> {
 
   /// The Scan page: items on the reader, press Scan, all of them come back here at once.
   Future<void> _openScanPage() async {
-    final tags = await Navigator.of(context).push<List<String>>(MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader)));
+    final tags = await Navigator.of(context).push<List<String>>(
+      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, known: widget.storeTags, inspector: widget.api)),
+    );
     if (!mounted) return;
     if (tags != null && tags.isNotEmpty) _basket.addText(tags.join(' '));
   }
@@ -317,6 +356,7 @@ class _BasketScreenState extends State<BasketScreen> {
   }
 
   void _nextCustomer() {
+    if (widget.onBack case final back?) return back(); // the start page: the next customer begins there
     _basket.reset();
     _receipt.clear();
     _askedReceipt = false;
@@ -416,6 +456,16 @@ class _BasketScreenState extends State<BasketScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return PopScope(
+      canPop: widget.onBack == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _leave();
+      },
+      child: _page(context),
+    );
+  }
+
+  Widget _page(BuildContext context) {
     return Scaffold(
       // The on-screen keyboard covers the bottom instead of squeezing the screen
       // (the EPC box is at the top, so it stays visible).
@@ -423,6 +473,7 @@ class _BasketScreenState extends State<BasketScreen> {
       appBar: AltaiAppBar(
         title: 'Checkout',
         subtitle: widget.storeName,
+        onBack: widget.onBack == null ? null : _leave,
         onSubtitleTap: widget.onChangeStore == null ? null : _changeStore,
         actions: [
           if (widget.orders case final orders?)
@@ -437,7 +488,8 @@ class _BasketScreenState extends State<BasketScreen> {
             AppBarIcon(Icons.swap_horiz_rounded, tooltip: 'Exchange', onPressed: () => _openExchange(returns)),
           AppBarIcon(Icons.history_rounded, tooltip: 'Recent checkouts', onPressed: _openRecent),
           AppBarText(widget.staffName),
-          AppBarIcon(Icons.logout_rounded, tooltip: 'Log out', onPressed: widget.onLogout),
+          if (widget.onLogout case final logout?)
+            AppBarIcon(Icons.logout_rounded, tooltip: 'Log out', onPressed: logout),
         ],
       ),
       body: ListenableBuilder(

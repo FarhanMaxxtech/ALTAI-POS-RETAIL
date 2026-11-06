@@ -253,7 +253,7 @@ class _DemoOrderDialogState extends State<_DemoOrderDialog> {
 
   Future<void> _scan() async {
     final tags = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, target: 'demo order')),
+      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, inspector: widget.inspector, target: 'demo order')),
     );
     if (tags != null && mounted) setState(() => _tags.addAll(tags));
   }

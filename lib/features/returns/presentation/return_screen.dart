@@ -104,7 +104,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
   /// The Scan page: the returned items on the reader, Scan, and they all come back here.
   Future<void> _scanItems() async {
     final tags = await Navigator.of(context).push<List<String>>(
-        MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, target: 'return')));
+        MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, inspector: widget.inspector, target: 'return')));
     if (!mounted) return;
     if (tags != null && tags.isNotEmpty) _return.addText(tags.join(' '));
   }
@@ -385,12 +385,13 @@ class _ItemRow extends StatelessWidget {
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(
-              checking ? 'Checking…' : [item.productName, item.variation].whereType<String>().join(' · '),
+              checking ? 'Checking…' : item.productName ?? 'Unknown item',
               style: AltaiType.bodyStrong.copyWith(color: c.ink),
             ),
-            Text(problem ? item.problem ?? '' : formatEpc(item.epc),
-                style: (problem ? AltaiType.caption : AltaiType.epc)
-                    .copyWith(color: problem ? c.danger : c.inkMuted)),
+            if (problem)
+              Text(item.problem ?? '', style: AltaiType.caption.copyWith(color: c.danger))
+            else if (item.variation ?? item.sku case final sub?)
+              Text(sub, style: AltaiType.caption.copyWith(color: c.inkMuted)),
           ]),
         ),
         if (price != null) Text('RM $price', style: AltaiType.bodyStrong.copyWith(color: c.ink)),

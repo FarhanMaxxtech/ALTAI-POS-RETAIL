@@ -31,9 +31,11 @@ Future<void> scanWithReader(WidgetTester tester, FakeTagReader reader, List<Stri
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 600)); // the page slides in
   await tester.tap(find.widgetWithText(AltaiButton, 'Scan'));
-  for (var i = 0; i < 4; i++) {
-    await tester.pump(const Duration(milliseconds: 800)); // read rounds until nothing new
+  for (var i = 0; i < 3; i++) {
+    await tester.pump(const Duration(milliseconds: 800)); // the reader keeps reading…
   }
+  await tester.tap(find.widgetWithText(AltaiButton, 'Stop scanning')); // …until the cashier stops it
+  await tester.pump(const Duration(milliseconds: 800));
   await tester.tap(find.textContaining(RegExp(r'^Add \d+ to ')));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 600)); // back on Checkout

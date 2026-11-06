@@ -208,6 +208,7 @@ class AltaiButton extends StatelessWidget {
     this.icon,
     this.large = false,
     this.expand = false, // fill the available width
+    this.loading = false, // a spinner instead of the icon; tappable only if onPressed is set
   });
 
   final String text;
@@ -216,11 +217,12 @@ class AltaiButton extends StatelessWidget {
   final IconData? icon;
   final bool large;
   final bool expand;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
     final c = context.altai;
-    final enabled = onPressed != null;
+    final enabled = onPressed != null || loading;
     final (bg, fg, side) = switch (variant) {
       AltaiButtonVariant.primary => (c.brand, c.onBrand, BorderSide.none),
       AltaiButtonVariant.secondary => (
@@ -237,7 +239,7 @@ class AltaiButton extends StatelessWidget {
     };
     final ghost = variant == AltaiButtonVariant.ghost;
     final button = TextButton(
-      onPressed: onPressed,
+      onPressed: loading ? (onPressed ?? () {}) : onPressed,
       style: TextButton.styleFrom(
         backgroundColor: bg,
         disabledBackgroundColor: ghost ? Colors.transparent : c.surfaceSunken,
@@ -260,7 +262,14 @@ class AltaiButton extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (icon != null) ...[
+          if (loading) ...[
+            SizedBox(
+              width: large ? 24 : 20,
+              height: large ? 24 : 20,
+              child: CircularProgressIndicator(strokeWidth: 2.5, color: fg),
+            ),
+            const SizedBox(width: D.space3),
+          ] else if (icon != null) ...[
             Icon(icon, size: large ? 28 : 24),
             const SizedBox(width: D.space2),
           ],
@@ -270,7 +279,8 @@ class AltaiButton extends StatelessWidget {
         ],
       ),
     );
-    return expand ? SizedBox(width: double.infinity, child: button) : button;
+    final shown = loading && onPressed == null ? IgnorePointer(child: button) : button;
+    return expand ? SizedBox(width: double.infinity, child: shown) : shown;
   }
 }
 

@@ -7,8 +7,8 @@ import 'features/auth/domain/staff.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/checkout/data/checkout_api.dart';
 import 'features/checkout/data/store_tags.dart';
-import 'features/checkout/presentation/basket_screen.dart';
 import 'features/catalog/data/catalog_api.dart';
+import 'features/home/home_screen.dart';
 import 'features/orders/data/orders_api.dart';
 import 'features/returns/data/returns_api.dart';
 import 'shared/altai_theme.dart';
@@ -16,7 +16,7 @@ import 'shared/altai_widgets.dart';
 
 void main() => runApp(const AltaiPosApp());
 
-/// Log in → basket. The tablet's location (its store) is set once from the login screen and stays
+/// Log in → the start page (Scan for Checkout / Return / Refund). The tablet's location (its store) is set once from the login screen and stays
 /// when staff log out, so nobody picks a store. The login is remembered too, so reopening the app
 /// goes straight to the basket.
 class AltaiPosApp extends StatefulWidget {
@@ -96,7 +96,7 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
                   location: location,
                   onLocationSet: (s) => setState(() => _location = s),
                   onLoggedIn: (s) => setState(() => _staff = s))
-              : BasketScreen(
+              : HomeScreen(
                   api: _checkout,
                   storeId: location.id,
                   storeName: location.name,

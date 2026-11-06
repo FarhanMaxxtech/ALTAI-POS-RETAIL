@@ -7,6 +7,8 @@ import 'package:altai_pos/shared/altai_widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/fake_tag_reader.dart';
+
 class FakeApi implements CheckoutApi {
   Object? nextError;
   int sends = 0;
@@ -66,6 +68,7 @@ Finder textBox(String hintOrLabel) => find.byWidgetPredicate(
 );
 
 void main() {
+  final reader = FakeTagReader();
   late FakeApi api;
 
   setUp(() => api = FakeApi());
@@ -74,6 +77,7 @@ void main() {
     MaterialApp(
       theme: altaiTheme(Brightness.light),
       home: BasketScreen(
+          tagReader: reader,
         api: api,
         storeId: '12',
         storeName: 'MidValley',
@@ -84,11 +88,8 @@ void main() {
     ),
   );
 
-  // What a reader in keyboard mode does: type the tag, press Enter.
   Future<void> scan(WidgetTester tester, String epc) async {
-    await tester.enterText(textBox('Scan or type EPC'), epc);
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pump(const Duration(milliseconds: 300));
+    await scanWithReader(tester, reader, [epc]);
     await tester.pump();
   }
 
@@ -158,16 +159,6 @@ void main() {
     await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();
     expect(find.textContaining('already on transaction 499 at 14:02:11'), findsOneWidget);
-  });
-
-  testWidgets('tags typed into the receipt box by mistake go to the basket', (tester) async {
-    await open(tester);
-    await tester.enterText(textBox('StoreHub receipt no.'), 'E2801160000000A1E2801160');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pump();
-    expect(find.text('Classic Tee'), findsWidgets);
-    expect(find.text('E2801160000000A1E2801160'), findsNothing);
   });
 
   testWidgets('no receipt: pick a reason, then Confirm works', (tester) async {

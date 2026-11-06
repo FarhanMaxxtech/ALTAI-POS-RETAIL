@@ -9,6 +9,8 @@ import 'package:altai_pos/shared/altai_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/fake_tag_reader.dart';
+
 import 'returns_test.dart' show FakeTeam;
 
 /// Tags starting with A are a Classic Tee (RM 49.90), with B a pair of jeans (RM 59.90).
@@ -72,6 +74,7 @@ Finder textBox(String hintOrLabel) => find.byWidgetPredicate(
 );
 
 void main() {
+  final reader = FakeTagReader();
   test('the money that changes hands', () {
     String rm(int c) => formatRm(c);
     expect(exchangeDifferenceText(5990, 4990, rm), 'Customer pays RM 10.00 more on StoreHub');
@@ -98,6 +101,7 @@ void main() {
       MaterialApp(
         theme: altaiTheme(Brightness.light),
         home: BasketScreen(
+          tagReader: reader,
           api: api,
           returns: ReturnsApi(team.api),
           catalog: FakeCatalog(),
@@ -135,7 +139,8 @@ void main() {
     expect(find.text('Exchange · 2 of 2: new items'), findsOneWidget);
     await tester.tap(find.text('Same receipt'));
     await tester.pump();
-    await scanInto('Scan or type EPC', 'B2801160000000B1');
+    await scanWithReader(tester, reader, ['B2801160000000B1']);
+    await tester.pumpAndSettle();
     expect(find.text('Customer pays RM 10.00 more on StoreHub'), findsOneWidget);
 
     await tester.tap(find.text('Confirm & submit'));
@@ -161,6 +166,7 @@ void main() {
       MaterialApp(
         theme: altaiTheme(Brightness.light),
         home: BasketScreen(
+          tagReader: reader,
           api: FakeApi(),
           returns: ReturnsApi(FakeTeam().api),
           storeId: '12',
@@ -171,9 +177,7 @@ void main() {
         ),
       ),
     );
-    await tester.enterText(textBox('Scan or type EPC'), 'A2801160000000A1');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pump(const Duration(milliseconds: 300));
+    await scanWithReader(tester, reader, ['A2801160000000A1']);
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Exchange'));
     await tester.pumpAndSettle();

@@ -9,6 +9,7 @@ import '../../../shared/altai_widgets.dart';
 import '../../../shared/barcode_scan_screen.dart';
 import '../../../shared/beeper.dart';
 import '../../../shared/keyboard.dart';
+import '../../../shared/rfid_reader.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../orders/data/orders_api.dart';
 import '../../orders/presentation/orders_screen.dart';
@@ -24,8 +25,7 @@ import 'scan_page.dart';
 
 /// The tablet's main screen: read the items, check them, record the sale.
 ///
-/// The EPC box keeps the keyboard focus because a USB RFID pad or reader in keyboard mode "types"
-/// each tag and presses Enter. A pad with its own connection only has to call controller.addText.
+/// Items come in through the Scan page, which drives the USB RFID reader.
 class BasketScreen extends StatefulWidget {
   const BasketScreen({
     super.key,
@@ -40,6 +40,7 @@ class BasketScreen extends StatefulWidget {
     this.orders,
     this.barcodeScanner = scanBarcode,
     this.askReceiptOnScan = false,
+    this.tagReader = const UsbTagReader(),
   });
 
   final CheckoutApi api;
@@ -66,6 +67,9 @@ class BasketScreen extends StatefulWidget {
   /// Asks for the receipt as soon as the first items are read, so the cashier types it while the
   /// tags are checked in the background (the wait is hidden behind something useful).
   final bool askReceiptOnScan;
+
+  /// The USB RFID reader the Scan page drives (keyboard-mode readers need nothing).
+  final TagReader tagReader;
 
   @override
   State<BasketScreen> createState() => _BasketScreenState();
@@ -104,8 +108,6 @@ class _BasketScreenState extends State<BasketScreen> {
     staffName: widget.staffName,
     catalog: widget.catalog,
   );
-  final _input = TextEditingController();
-  final _focus = FocusNode();
   final _receipt = TextEditingController();
   final _beeper = Beeper();
 
@@ -113,7 +115,6 @@ class _BasketScreenState extends State<BasketScreen> {
   final Map<String, int> _lastQty = {}; // sku → qty last time, to notice which line grew
   String? _flashSku; // the line that just got one more piece (green for a moment)
   bool _reading = false; // "Reading…" for a moment after each tag
-  bool _typing = false; // on-screen keyboard shown (only when staff want to type an EPC)
   bool _askedReceipt = false; // the receipt pop-up shows once per basket
   Timer? _flashTimer;
   Timer? _readingTimer;
@@ -132,8 +133,6 @@ class _BasketScreenState extends State<BasketScreen> {
     _readingTimer?.cancel();
     _basket.removeListener(_onBasketChanged);
     _basket.dispose();
-    _input.dispose();
-    _focus.dispose();
     _receipt.dispose();
     _beeper.dispose();
     super.dispose();
@@ -190,37 +189,6 @@ class _BasketScreenState extends State<BasketScreen> {
     }
   }
 
-  void _addTyped([String? _]) {
-    _basket.addText(_input.text);
-    _input.clear();
-    _focus.requestFocus();
-  }
-
-  /// The RFID pad types like a hardware keyboard, so the on-screen keyboard stays hidden
-  /// (it would cover half the screen). The keyboard button in the EPC box shows it for typing.
-  void _toggleKeyboard() {
-    setState(() => _typing = !_typing);
-    _focus.unfocus(); // the new keyboard type applies the next time the box gets focus
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _focus.requestFocus();
-      if (_typing) showKeyboard();
-    });
-  }
-
-  /// A reader in keyboard mode types into whichever box has the focus. If tags landed in the
-  /// receipt box, move them to the basket instead.
-  static final _looksLikeTags = RegExp(r'^[0-9A-Fa-f]{24,}(\s+[0-9A-Fa-f]{24,})*$');
-
-  void _receiptSubmitted(String value) {
-    if (_looksLikeTags.hasMatch(value.trim())) {
-      _basket.addText(value);
-      _receipt.clear();
-      _basket.setReceipt('');
-    }
-    _focus.requestFocus(); // next: the items
-  }
-
   void _maybeAskReceipt() {
     if (!widget.askReceiptOnScan || _askedReceipt) return;
     if (_basket.hasReceipt || _basket.exchange != null || _basket.phase != BasketPhase.scanning) return;
@@ -230,11 +198,11 @@ class _BasketScreenState extends State<BasketScreen> {
     });
   }
 
-  /// The receipt pop-up. Tags the reader types into it still go to the basket.
+  /// The receipt pop-up.
   Future<void> _askReceipt() async {
     final result = await showDialog<String>(
       context: context,
-      builder: (_) => _ReceiptPrompt(basket: _basket, initial: _receipt.text, looksLikeTags: _looksLikeTags),
+      builder: (_) => _ReceiptPrompt(basket: _basket, initial: _receipt.text),
     );
     if (!mounted) return;
     if (result == _noReceipt) {
@@ -245,18 +213,16 @@ class _BasketScreenState extends State<BasketScreen> {
       _receipt.text = result;
       _basket.setReceipt(result);
     }
-    _focus.requestFocus();
   }
 
   /// The Scan page: items on the reader, press Scan, all of them come back here at once.
   Future<void> _openScanPage() async {
-    final tags = await Navigator.of(context).push<List<String>>(MaterialPageRoute(builder: (_) => const ScanPage()));
+    final tags = await Navigator.of(context).push<List<String>>(MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader)));
     if (!mounted) return;
     if (tags != null && tags.isNotEmpty) _basket.addText(tags.join(' '));
-    _focus.requestFocus();
   }
 
-  /// Camera barcode → receipt box, then back to the EPC box for the items.
+  /// Camera barcode → receipt box.
   Future<void> _scanReceipt() async {
     final value = await widget.barcodeScanner(context);
     if (!mounted) return;
@@ -264,7 +230,6 @@ class _BasketScreenState extends State<BasketScreen> {
       _receipt.text = value;
       _basket.setReceipt(value);
     }
-    _focus.requestFocus();
   }
 
   Future<void> _pickNoReceipt() async {
@@ -289,7 +254,6 @@ class _BasketScreenState extends State<BasketScreen> {
       _receipt.clear();
       _basket.setNoReceipt(reason);
     }
-    _focus.requestFocus();
   }
 
   void _nextCustomer() {
@@ -298,7 +262,6 @@ class _BasketScreenState extends State<BasketScreen> {
     _askedReceipt = false;
     _lastCount = 0;
     _lastQty.clear();
-    _focus.requestFocus();
   }
 
   void _changeStore() {
@@ -324,8 +287,7 @@ class _BasketScreenState extends State<BasketScreen> {
               catalog: widget.catalog,
             ),
           ),
-        )
-        .then((_) => _focus.requestFocus());
+        );
   }
 
   /// Exchange, step 1: the items coming back (the return screen). Step 2 is this basket, for the new items.
@@ -352,7 +314,6 @@ class _BasketScreenState extends State<BasketScreen> {
     );
     if (!mounted) return;
     if (returned != null) _basket.startExchange(returned);
-    _focus.requestFocus();
   }
 
   /// The money that changes hands in an exchange, or null when this basket isn't one.
@@ -374,8 +335,7 @@ class _BasketScreenState extends State<BasketScreen> {
               staffName: widget.staffName,
             ),
           ),
-        )
-        .then((_) => _focus.requestFocus());
+        );
   }
 
   void _openRecent() {
@@ -389,8 +349,7 @@ class _BasketScreenState extends State<BasketScreen> {
               catalog: widget.catalog,
             ),
           ),
-        )
-        .then((_) => _focus.requestFocus());
+        );
   }
 
   @override
@@ -597,7 +556,6 @@ class _BasketScreenState extends State<BasketScreen> {
               onPressed: () {
                 _receipt.text = original;
                 _basket.setReceipt(original);
-                _focus.requestFocus();
               },
               child: const Text('Same receipt'),
             ),
@@ -653,7 +611,6 @@ class _BasketScreenState extends State<BasketScreen> {
               ),
             ),
             onChanged: _basket.setReceipt,
-            onSubmitted: _receiptSubmitted,
           ),
         ),
         const SizedBox(width: D.space2),
@@ -678,47 +635,21 @@ class _BasketScreenState extends State<BasketScreen> {
         children: [
           Row(
             children: [
-              SizedBox(
-                width: 44,
-                child: Text('EPC', style: AltaiType.label.copyWith(color: c.inkMuted)),
-              ),
+              Icon(Icons.sensors_rounded, color: c.brandInk),
               const SizedBox(width: D.space3),
               Expanded(
-                child: TextField(
-                  controller: _input,
-                  focusNode: _focus,
-                  autofocus: true,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  textCapitalization: TextCapitalization.characters,
-                  keyboardType: _typing ? TextInputType.text : TextInputType.none,
-                  style: AltaiType.epc.copyWith(color: c.ink),
-                  decoration: InputDecoration(
-                    hintText: 'Scan or type EPC',
-                    hintStyle: AltaiType.epc.copyWith(color: c.inkMuted),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: D.space3, vertical: D.space3),
-                    suffixIcon: IconButton(
-                      tooltip: _typing ? 'Hide keyboard' : 'Type an EPC',
-                      color: c.inkMuted,
-                      onPressed: _toggleKeyboard,
-                      icon: Icon(_typing ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined),
-                    ),
-                  ),
-                  onSubmitted: _addTyped,
+                child: Text(
+                  'Put the items on the reader, then tap Scan.',
+                  style: AltaiType.body.copyWith(color: c.ink),
                 ),
               ),
               const SizedBox(width: D.space3),
-              AltaiButton('Scan', onPressed: _openScanPage, variant: AltaiButtonVariant.primary, icon: Icons.sensors_rounded),
-              const SizedBox(width: D.space2),
-              // "Add" is only active when something is typed.
-              ValueListenableBuilder<TextEditingValue>(
-                valueListenable: _input,
-                builder: (context, v, _) => AltaiButton(
-                  'Add',
-                  onPressed: v.text.trim().isEmpty ? null : _addTyped,
-                  icon: Icons.add_rounded,
-                ),
+              AltaiButton(
+                'Scan',
+                onPressed: _openScanPage,
+                variant: AltaiButtonVariant.primary,
+                icon: Icons.sensors_rounded,
+                large: true,
               ),
               const SizedBox(width: D.space3),
               ReaderStatusPill(reading: _reading),
@@ -726,7 +657,7 @@ class _BasketScreenState extends State<BasketScreen> {
           ),
           const SizedBox(height: D.space2),
           Padding(
-            padding: const EdgeInsets.only(left: 44 + D.space3),
+            padding: const EdgeInsets.only(left: 24 + D.space3),
             child: Wrap(
               spacing: D.space3,
               runSpacing: D.space1,
@@ -734,7 +665,7 @@ class _BasketScreenState extends State<BasketScreen> {
               children: [
                 if (last == null)
                   Text(
-                    'Place items on the pad, or type an EPC and tap Add.',
+                    'Nothing read yet.',
                     style: AltaiType.caption.copyWith(color: c.inkMuted),
                   )
                 else ...[
@@ -1074,11 +1005,7 @@ class _BasketScreenState extends State<BasketScreen> {
         ),
       ),
     );
-    if (ok == true) {
-      _basket.complete();
-    } else {
-      _focus.requestFocus();
-    }
+    if (ok == true) _basket.complete();
   }
 
   /* ---------------- Other phases ---------------- */
@@ -1232,11 +1159,10 @@ const _noReceipt = '<no receipt>';
 
 /// Asks for the StoreHub receipt while the tags are checked behind it, and shows how far the checks are.
 class _ReceiptPrompt extends StatefulWidget {
-  const _ReceiptPrompt({required this.basket, required this.initial, required this.looksLikeTags});
+  const _ReceiptPrompt({required this.basket, required this.initial});
 
   final BasketController basket;
   final String initial;
-  final RegExp looksLikeTags;
 
   @override
   State<_ReceiptPrompt> createState() => _ReceiptPromptState();
@@ -1252,11 +1178,6 @@ class _ReceiptPromptState extends State<_ReceiptPrompt> {
   }
 
   void _submit(String v) {
-    if (widget.looksLikeTags.hasMatch(v.trim())) {
-      widget.basket.addText(v); // the reader typed tags here: they belong in the basket
-      _box.clear();
-      return;
-    }
     if (v.trim().isNotEmpty) Navigator.of(context).pop(v.trim());
   }
 

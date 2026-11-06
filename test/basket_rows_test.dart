@@ -7,6 +7,8 @@ import 'package:altai_pos/shared/altai_widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/fake_tag_reader.dart';
+
 /// Tags: A… = Classic Tee in two sizes, B… = Slim Jeans, C… = a product with a long name.
 class FakeApi implements CheckoutApi {
   static Map<String, dynamic> _tag(String epc) {
@@ -67,6 +69,7 @@ class FakeCatalog implements CatalogApi {
 String epc(String prefix, int i) => '$prefix${i.toString().padLeft(15, '0')}';
 
 void main() {
+  final reader = FakeTagReader();
   Future<void> open(WidgetTester tester, Size size, double textScale, {double navBar = 0}) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -81,6 +84,7 @@ void main() {
           child: aboveSystemBars(context, child),
         ),
         home: BasketScreen(
+          tagReader: reader,
           api: FakeApi(),
           catalog: FakeCatalog(),
           storeId: '12',
@@ -103,12 +107,7 @@ void main() {
       find.byWidgetPredicate((w) => w is TextField && w.decoration?.labelText == 'StoreHub receipt no.'),
       'SH-0012',
     );
-    await tester.enterText(
-      find.byWidgetPredicate((w) => w is TextField && w.decoration?.hintText == 'Scan or type EPC'),
-      tags.join(' '),
-    );
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pump(const Duration(milliseconds: 300));
+    await scanWithReader(tester, reader, tags);
     await tester.pumpAndSettle();
   }
 

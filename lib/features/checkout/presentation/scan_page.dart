@@ -1,102 +1,148 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
-import '../domain/basket.dart';
+import '../../../shared/rfid_reader.dart';
 
 enum ScanPhase { ready, reading, done }
 
 /// Put the items on the reader, press Scan, and every tag is read in one go.
 ///
-/// The reader types each tag like a keyboard and presses Enter, so this page keeps a small box
-/// focused the whole time. Reading stops by itself once no new tag has come for a moment.
-/// Returns the tags read (null = cancelled).
+/// The app tells the USB reader ([reader]) to read, round after round, until a couple of rounds
+/// bring nothing new. Returns the tags read (null = cancelled).
 class ScanPage extends StatefulWidget {
   const ScanPage({
     super.key,
+    required this.reader,
     this.minRead = const Duration(seconds: 2),
-    this.quiet = const Duration(milliseconds: 1500),
+    this.round = const Duration(milliseconds: 800),
   });
+
+  /// The USB RFID reader.
+  final TagReader reader;
+
+  /// One read round of the USB reader.
+  final Duration round;
 
   /// Reading lasts at least this long after Scan is pressed.
   final Duration minRead;
-
-  /// ...and stops when no new tag came for this long.
-  final Duration quiet;
 
   @override
   State<ScanPage> createState() => _ScanPageState();
 }
 
 class _ScanPageState extends State<ScanPage> {
-  final _input = TextEditingController();
-  final _focus = FocusNode();
   final _beeper = Beeper();
   final Set<String> _tags = {}; // in the order read
   ScanPhase _phase = ScanPhase.ready;
-  Timer? _stop;
+  ReaderState _usb = ReaderState.none;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkReader();
+  }
+
+  Future<void> _checkReader() async {
+    final s = await widget.reader.state();
+    if (mounted) setState(() => _usb = s);
+  }
+
+  Future<void> _allowReader() async {
+    final ok = await widget.reader.askPermission();
+    if (!mounted) return;
+    await _checkReader();
+    if (!ok && mounted) {
+      setState(
+        () => _error = 'The reader was not allowed. Tap Allow to try again.',
+      );
+    }
+  }
+
+  /// USB reader: read round after round; stop after the minimum time once 2 rounds found nothing new.
+  Future<void> _usbLoop() async {
+    final reader = widget.reader;
+    // Read time so far, counted in rounds (each round is one read of widget.round).
+    var readTime = Duration.zero;
+    var quietRounds = 0;
+    while (mounted && _phase == ScanPhase.reading) {
+      List<String> got;
+      try {
+        got = await reader.read(widget.round);
+        readTime += widget.round;
+      } on ReaderException catch (e) {
+        if (!mounted) return;
+        setState(() => _error = e.message);
+        _finish();
+        _checkReader();
+        return;
+      }
+      if (!mounted) return;
+      final added = _add(got); // keep what the last round read, even after Stop
+      if (_phase != ScanPhase.reading) return;
+      quietRounds = added ? 0 : quietRounds + 1;
+      if (quietRounds >= 2 && readTime >= widget.minRead) _finish();
+    }
+  }
+
+  /// Adds new tags; true if any was new.
+  bool _add(Iterable<String> epcs) {
+    final fresh = [
+      for (final e in epcs)
+        if (!_tags.contains(e)) e,
+    ];
+    if (fresh.isEmpty) return false;
+    HapticFeedback.lightImpact();
+    _beeper.ok();
+    setState(() => _tags.addAll(fresh));
+    return true;
+  }
 
   @override
   void dispose() {
-    _stop?.cancel();
-    _input.dispose();
-    _focus.dispose();
     _beeper.dispose();
     super.dispose();
   }
 
-  void _scan({bool fresh = false}) {
+  Future<void> _scan({bool fresh = false}) async {
+    if (_usb != ReaderState.ready) {
+      if (_usb == ReaderState.needsPermission) await _allowReader();
+      if (_usb == ReaderState.none) await _checkReader();
+      if (!mounted) return;
+      if (_usb != ReaderState.ready) {
+        setState(
+          () => _error =
+              'No RFID reader. Plug the reader into the tablet, then tap Look again.',
+        );
+        return;
+      }
+    }
     setState(() {
       if (fresh) _tags.clear();
+      _error = null;
       _phase = ScanPhase.reading;
     });
-    _stop?.cancel();
-    _stop = Timer(widget.minRead, _finish);
-    _focus.requestFocus();
+    _usbLoop();
   }
 
   void _finish() {
-    _stop?.cancel();
     if (mounted) setState(() => _phase = ScanPhase.done);
-  }
-
-  /// The reader pressed Enter: take every tag in the box.
-  void _read([String? _]) {
-    final fresh = [
-      for (final e in parseTags(_input.text).epcs)
-        if (!_tags.contains(e)) e,
-    ];
-    _input.clear();
-    _focus.requestFocus();
-    if (fresh.isEmpty) return;
-    HapticFeedback.lightImpact();
-    _beeper.ok();
-    setState(() => _tags.addAll(fresh));
-    // A tag after reading ended (an item put down late) reopens the reading.
-    if (_phase == ScanPhase.done) setState(() => _phase = ScanPhase.reading);
-    if (_phase == ScanPhase.reading) {
-      _stop?.cancel();
-      _stop = Timer(widget.quiet, _finish);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final c = context.altai;
     final n = _tags.length;
     return Scaffold(
       appBar: AltaiAppBar(
         title: 'Scan items',
         onBack: () => Navigator.of(context).pop(),
       ),
-      body: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _focus.requestFocus, // keep the reader's typing landing here
-        child: Center(
+      body: Center(
+        // Scrolls on a short screen (portrait with a small window, big text).
+        child: SingleChildScrollView(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560),
             child: Padding(
@@ -104,37 +150,59 @@ class _ScanPageState extends State<ScanPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  _readerLine(context),
+                  const SizedBox(height: D.space4),
                   _steps(context),
                   const SizedBox(height: D.space6),
                   _status(context, n),
                   const SizedBox(height: D.space6),
                   ..._buttons(n),
-                  const SizedBox(height: D.space6),
-                  // Where the reader types. Small, but kept on screen so it can hold the focus.
-                  SizedBox(
-                    width: 260,
-                    child: TextField(
-                      controller: _input,
-                      focusNode: _focus,
-                      autofocus: true,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      keyboardType: TextInputType.none,
-                      textAlign: TextAlign.center,
-                      style: AltaiType.caption.copyWith(color: c.inkMuted),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        hintText: 'Reader input',
-                      ),
-                      onSubmitted: _read,
-                    ),
-                  ),
+                  if (_error case final e?) ...[
+                    const SizedBox(height: D.space4),
+                    AltaiNotice(e, warning: true),
+                  ],
                 ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// Which reader this page uses.
+  Widget _readerLine(BuildContext context) {
+    final c = context.altai;
+    final (icon, text, color) = switch (_usb) {
+      ReaderState.ready => (
+        Icons.usb_rounded,
+        'USB reader connected',
+        c.brandInk,
+      ),
+      ReaderState.needsPermission => (
+        Icons.usb_rounded,
+        'USB reader found: allow the app to use it',
+        c.warning,
+      ),
+      ReaderState.none => (
+        Icons.usb_off_rounded,
+        'No RFID reader plugged in',
+        c.warning,
+      ),
+    };
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: D.space2),
+        Flexible(
+          child: Text(text, style: AltaiType.caption.copyWith(color: color)),
+        ),
+        if (_usb == ReaderState.needsPermission)
+          TextButton(onPressed: _allowReader, child: const Text('Allow')),
+        if (_usb == ReaderState.none)
+          TextButton(onPressed: _checkReader, child: const Text('Look again')),
+      ],
     );
   }
 

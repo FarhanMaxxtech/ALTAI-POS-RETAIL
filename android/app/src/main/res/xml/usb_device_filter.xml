@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Silion desktop RFID reader (0x2E88 / 0x4605). When it is plugged in, Android offers to open
+     Altai POS, and "Always" there means no permission question again. -->
+<resources>
+    <usb-device vendor-id="11912" product-id="17925" />
+</resources>

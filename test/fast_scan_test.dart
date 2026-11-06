@@ -6,6 +6,8 @@ import 'package:altai_pos/shared/altai_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/fake_tag_reader.dart';
+
 /// Tag checks that finish only when the test says so, one tag at a time, like a slow network.
 class SlowApi implements CheckoutApi {
   final Map<String, Completer<Map<String, dynamic>>> pending = {};
@@ -43,6 +45,7 @@ const b = 'E28011600000000000000A02';
 const c = 'E28011600000000000000A03';
 
 void main() {
+  final reader = FakeTagReader();
   late SlowApi api;
 
   Future<void> open(WidgetTester tester, {bool ask = true}) async {
@@ -54,6 +57,7 @@ void main() {
       MaterialApp(
         theme: altaiTheme(Brightness.light),
         home: BasketScreen(
+          tagReader: reader,
           api: api,
           storeId: '12',
           storeName: 'MidValley',
@@ -66,9 +70,7 @@ void main() {
   }
 
   Future<void> scan(WidgetTester tester, String text) async {
-    await tester.enterText(textBox('Scan or type EPC'), text);
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pump(const Duration(milliseconds: 300)); // the reader's burst wait
+    await scanWithReader(tester, reader, text.split(' '));
     await tester.pump();
   }
 
@@ -105,18 +107,10 @@ void main() {
     expect(find.text('StoreHub receipt no.'), findsWidgets);
     expect(find.text('2 pcs read · checking 2…'), findsOneWidget);
 
-    // More tags from the reader land in the pop-up's box: they go to the basket.
-    await tester.enterText(textBox('Receipt no. from the iPad'), c);
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pump();
-    expect(find.text('3 pcs read · checking 3…'), findsOneWidget);
-
     api.finish(a);
     api.finish(b);
-    api.finish(c);
     await tester.pump();
-    expect(find.text('3 pcs read and checked'), findsOneWidget);
+    expect(find.text('2 pcs read and checked'), findsOneWidget);
 
     await tester.enterText(textBox('Receipt no. from the iPad'), '0022607201446208');
     await tester.pump();

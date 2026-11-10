@@ -114,6 +114,10 @@ void main() {
       itemFromInspection({'epc': tagA, 'found': true, 'store_id': '13', 'store_name': 'Pavilion'}, '12').problem,
       'Belongs to Pavilion',
     );
+    expect(
+      itemFromInspection({'epc': tagA, 'found': true}, '12').problem,
+      contains('already sold'),
+    );
     expect(itemFromInspection({'epc': tagA, 'found': true, 'store_id': '12'}, '12').state, ItemState.ok);
   });
 

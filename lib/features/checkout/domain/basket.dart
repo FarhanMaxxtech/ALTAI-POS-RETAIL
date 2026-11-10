@@ -67,7 +67,7 @@ BasketItem itemFromInspection(Map<String, dynamic> t, String storeId) {
     return problem('Held by a pending transfer, count or adjustment');
   }
   final tagStore = t['store_id'] as String?;
-  if (tagStore == null) return problem('Could not confirm which store it is in');
+  if (tagStore == null) return problem('Not in any store: probably already sold');
   if (tagStore != storeId) {
     return problem('Belongs to ${t['store_name'] ?? 'another store'}');
   }

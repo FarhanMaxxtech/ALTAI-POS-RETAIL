@@ -87,6 +87,7 @@ class CheckoutApi {
         'store_id': _str(d['currentStoreId'] ?? d['storeId']),
         'store_name': d['storeName']?.toString(),
         'pending_transaction': d['isPendingTransaction'] == true || d['isPending'] == true || d['pending'] == true,
+        'multiplier': int.tryParse(d['multiplier']?.toString() ?? '') ?? 1,
       };
     } on ApiException catch (e) {
       if (e.sessionExpired) rethrow; // stops the whole check: staff must log in

@@ -118,6 +118,14 @@ void main() {
       itemFromInspection({'epc': tagA, 'found': true}, '12').problem,
       contains('already sold'),
     );
+    expect(
+      itemFromInspection({'epc': tagA, 'found': true, 'store_id': '12', 'multiplier': 10}, '12').multiplier,
+      10,
+    );
+    expect(
+      itemFromInspection({'epc': tagA, 'found': true, 'store_id': '12'}, '12').multiplier,
+      1,
+    );
     expect(itemFromInspection({'epc': tagA, 'found': true, 'store_id': '12'}, '12').state, ItemState.ok);
   });
 

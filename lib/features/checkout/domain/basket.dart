@@ -14,6 +14,7 @@ class BasketItem {
     this.variation,
     this.sku,
     this.problem,
+    this.multiplier = 1,
   });
 
   final String epc;
@@ -22,6 +23,7 @@ class BasketItem {
   final String? productCode; // the same for every colour and size of one product
   final String? variation;
   final String? sku;
+  final int multiplier;
 
   /// Why it can't be sold, in words for the cashier.
   final String? problem;
@@ -57,6 +59,7 @@ BasketItem itemFromInspection(Map<String, dynamic> t, String storeId) {
     productCode: t['product_code'] as String?,
     variation: t['variation'] as String?,
     sku: t['sku'] as String?,
+    multiplier: (t['multiplier'] as int?) ?? 1,
   );
 
   if (t['found'] == false) return problem('Not registered to any product');
@@ -78,6 +81,7 @@ BasketItem itemFromInspection(Map<String, dynamic> t, String storeId) {
     productCode: t['product_code'] as String?,
     variation: t['variation'] as String?,
     sku: t['sku'] as String?,
+    multiplier: (t['multiplier'] as int?) ?? 1,
   );
 }
 

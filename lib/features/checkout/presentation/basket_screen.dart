@@ -997,6 +997,14 @@ class _BasketScreenState extends State<BasketScreen> {
                             '${_exchangeDifference == null ? '' : ' ${_exchangeDifference!}.'}',
                           ),
                         ],
+                        if (lines.any((l) => l.variants.values.any((v) => v.first.multiplier > 1))) ...[
+                          const SizedBox(height: D.space3),
+                          const AltaiNotice(
+                            'This basket has a bundle tag. Altai records 1 pc for it and marks the whole tag as sold, '
+                            'so the rest of the bundle can\'t be sold after. Check with the manager first.',
+                            warning: true,
+                          ),
+                        ],
                         const SizedBox(height: D.space6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: D.space6, vertical: D.space4),
@@ -1065,7 +1073,11 @@ class _BasketScreenState extends State<BasketScreen> {
                                               style: AltaiType.label.copyWith(fontSize: 16, color: c.ink),
                                             ),
                                             Text(
-                                              [v.first.variation, 'SKU ${v.sku}'].whereType<String>().join(' · '),
+                                              [
+                                                v.first.variation,
+                                                'SKU ${v.sku}',
+                                                if (v.first.multiplier > 1) 'Bundle ×${v.first.multiplier}',
+                                              ].whereType<String>().join(' · '),
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: AltaiType.caption.copyWith(color: c.inkMuted),

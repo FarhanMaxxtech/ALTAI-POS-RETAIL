@@ -1074,9 +1074,9 @@ class _BasketScreenState extends State<BasketScreen> {
                                             ),
                                             Text(
                                               [
+                                                if (v.first.multiplier > 1) 'Bundle ×${v.first.multiplier}',
                                                 v.first.variation,
                                                 'SKU ${v.sku}',
-                                                if (v.first.multiplier > 1) 'Bundle ×${v.first.multiplier}',
                                               ].whereType<String>().join(' · '),
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,

@@ -104,3 +104,15 @@ int? toCents(String? price) {
 
 /// 4990 → "49.90"
 String formatRm(int cents) => '${cents ~/ 100}.${(cents % 100).toString().padLeft(2, '0')}';
+
+/// Altai's error when a bound item (e.g. a stone) is checked out without the product it's bound to
+/// (e.g. its ring), in words for the cashier. Any other message comes back unchanged.
+String checkoutErrorForCashier(String message) {
+  final part = RegExp(r'Category \[([^\]]+)\] cannot be checked out on its own').firstMatch(message);
+  if (part == null) return message;
+  final main = RegExp(r'for category \[([^\]]+)\]').firstMatch(message);
+  final partName = part.group(1)!;
+  final mainName = main?.group(1) ?? 'product';
+  return 'A $partName item is bound to a $mainName and can\'t be sold on its own. '
+      'Scan the $mainName together with it, or remove the $partName item.';
+}

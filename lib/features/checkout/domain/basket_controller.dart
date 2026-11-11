@@ -346,7 +346,7 @@ class BasketController extends ChangeNotifier {
   }
 
   void _handleFailure(ApiException e) {
-    message = e.message;
+    message = checkoutErrorForCashier(e.message);
     if (e.noAnswer || (e.status ?? 0) >= 500) {
       phase = BasketPhase.retry; // may or may not be recorded: Try again checks first
     } else {

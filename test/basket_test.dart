@@ -232,4 +232,16 @@ void main() {
     expect(n.noReceiptReason, 'Receipt lost');
     expect(n.cashier, isNull);
   });
+
+  test('a bound-items error from Altai is put in words for the cashier', () {
+    const altai = 'Category [batu] cannot be checked out on its own: 1 item(s) scanned without the product '
+        'they are bound to. Bound items mismatch for category [ring]: required 1 (PR000053 Ruby Gem x1), scanned 0.';
+    expect(
+      checkoutErrorForCashier(altai),
+      "A batu item is bound to a ring and can't be sold on its own. "
+          'Scan the ring together with it, or remove the batu item.',
+    );
+    // any other error is shown as it is
+    expect(checkoutErrorForCashier('Tag not found'), 'Tag not found');
+  });
 }

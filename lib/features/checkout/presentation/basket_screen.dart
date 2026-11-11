@@ -1073,13 +1073,16 @@ class _BasketScreenState extends State<BasketScreen> {
                                               style: AltaiType.label.copyWith(fontSize: 16, color: c.ink),
                                             ),
                                             Text(
-                                              [
-                                                if (v.first.multiplier > 1) 'Bundle ×${v.first.multiplier}',
-                                                v.first.variation,
-                                                'SKU ${v.sku}',
-                                              ].whereType<String>().join(' · '),
-                                              maxLines: 1,
+                                              v.first.variation ?? '',
+                                              maxLines: 2,
                                               overflow: TextOverflow.ellipsis,
+                                              style: AltaiType.caption.copyWith(color: c.inkMuted),
+                                            ),
+                                            Text(
+                                              [
+                                                'SKU ${v.sku}',
+                                                if (v.first.multiplier > 1) 'Bundle ×${v.first.multiplier}',
+                                              ].join(' · '),
                                               style: AltaiType.caption.copyWith(color: c.inkMuted),
                                             ),
                                           ],

@@ -169,4 +169,15 @@ void main() {
     expect(r.canSubmit, isFalse);
     expect(team.count('Stock/AdjustmentApproveNoScan'), 0);
   });
+
+  test('a piece still in a store\'s stock was never sold, so it can\'t be returned', () {
+    final inStock = returnItemFromInspection(
+        {'epc': 'A1', 'found': true, 'store_id': '12', 'store_name': 'Subang Jaya'});
+    expect(inStock.state, ItemState.problem);
+    expect(inStock.problem, contains('Still in stock at Subang Jaya'));
+
+    // sold: no store any more, so it can come back
+    final sold = returnItemFromInspection({'epc': 'A1', 'found': true});
+    expect(sold.state, ItemState.ok);
+  });
 }

@@ -19,8 +19,8 @@ enum ReturnPhase {
 /// Why customers bring things back. Saved in the adjustment's remark.
 const returnReasons = ['Wrong size', 'Defective', 'Changed mind', 'Other'];
 
-/// What can stop a tag from being returned. A tag's store isn't checked: the team's API doesn't say
-/// whether a tag is sold, so the receipt is what staff check.
+/// What can stop a tag from being returned. A tag with a store is still in stock (never sold), so it
+/// can't come back; a sold tag has no store.
 BasketItem returnItemFromInspection(Map<String, dynamic> t) {
   final epc = t['epc'] as String;
   BasketItem item(ItemState state, [String? problem]) => BasketItem(epc,
@@ -34,6 +34,12 @@ BasketItem returnItemFromInspection(Map<String, dynamic> t) {
   if (t['found'] != true) return item(ItemState.problem, 'Could not check this tag');
   if (t['pending_transaction'] == true) {
     return item(ItemState.problem, 'Held by a pending transfer, count or adjustment');
+  }
+  if (t['store_id'] != null) {
+    return item(
+      ItemState.problem,
+      "Still in stock at ${t['store_name'] ?? 'a store'}: it was never sold, so it can't be returned",
+    );
   }
   return item(ItemState.ok);
 }

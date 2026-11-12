@@ -6,6 +6,7 @@ import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
 import '../../../shared/keyboard.dart';
 import '../../../shared/reader_session.dart';
+import '../../../shared/reader_widgets.dart';
 import '../../../shared/rfid_reader.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../checkout/data/checkout_api.dart';
@@ -20,7 +21,7 @@ import '../domain/return_controller.dart';
 /// hands an [ExchangeReturn] to the checkout, where the new items are scanned.
 ///
 /// The items coming back are read straight from the USB RFID reader into the list, like at checkout:
-/// with [autoRead] it starts reading as soon as the screen opens.
+/// it reads the whole time the screen is open (paused only while the confirm box is up).
 class ReturnScreen extends StatefulWidget {
   const ReturnScreen({
     super.key,
@@ -32,7 +33,6 @@ class ReturnScreen extends StatefulWidget {
     this.catalog,
     this.exchange = false,
     this.tagReader = const UsbTagReader(),
-    this.autoRead = false,
   });
 
   final CheckoutApi inspector;
@@ -48,9 +48,6 @@ class ReturnScreen extends StatefulWidget {
   /// The USB RFID reader this screen drives.
   final TagReader tagReader;
 
-  /// Start reading as soon as the screen opens (and again for a new return).
-  final bool autoRead;
-
   @override
   State<ReturnScreen> createState() => _ReturnScreenState();
 }
@@ -65,9 +62,11 @@ class _ReturnScreenState extends State<ReturnScreen> {
   final _receipt = TextEditingController();
   final _beeper = Beeper();
   late final ReaderSession _reader =
-      ReaderSession(reader: widget.tagReader, onTags: (epcs) => _return.addText(epcs.join(' ')));
+      ReaderSession(reader: widget.tagReader, onTags: _return.readRound);
   int _lastCount = 0;
   bool _handedBack = false; // exchange: the result is passed back once
+  bool _pausedNow = false; // the confirm box is open: the reader waits
+  ReturnPhase _lastPhase = ReturnPhase.scanning;
 
   bool get _showPrices => widget.catalog != null;
 
@@ -76,20 +75,11 @@ class _ReturnScreenState extends State<ReturnScreen> {
     super.initState();
     _return.addListener(_onChanged);
     _reader.addListener(_onReaderChanged);
-    if (widget.autoRead) _reader.start();
+    _reader.start();
   }
 
   void _onReaderChanged() {
     if (mounted) setState(() {});
-  }
-
-  /// Scan starts the reader; the same button (Stop scanning) stops it.
-  void _toggleReading() {
-    if (_reader.reading) {
-      _reader.stop();
-    } else {
-      _reader.start();
-    }
   }
 
   @override
@@ -111,6 +101,11 @@ class _ReturnScreenState extends State<ReturnScreen> {
     }
     _lastCount = count;
 
+    // Back to scanning (a new return, or the submit didn't go through): read again.
+    final phase = _return.phase;
+    if (phase != _lastPhase && phase == ReturnPhase.scanning && !_pausedNow) _reader.start();
+    _lastPhase = phase;
+
     if (widget.exchange && _return.phase == ReturnPhase.done && !_handedBack) {
       _handedBack = true;
       final result = ExchangeReturn(
@@ -129,7 +124,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
     _return.reset();
     _receipt.clear();
     _lastCount = 0;
-    if (widget.autoRead) _reader.start();
+    _reader.start();
   }
 
   /// A return that may be half done stays on screen until it's finished.
@@ -145,7 +140,9 @@ class _ReturnScreenState extends State<ReturnScreen> {
 
   /// Last look: this changes live stock and can't be undone from the tablet.
   Future<void> _confirm() async {
-    _reader.stop(); // what's on screen is what comes back: no new tags while the cashier checks it
+    // What's on screen is what comes back: no new tags while the cashier checks it.
+    _pausedNow = true;
+    _reader.stop();
     final c = context.altai;
     final ok = await showDialog<bool>(
       context: context,
@@ -169,7 +166,12 @@ class _ReturnScreenState extends State<ReturnScreen> {
         ],
       ),
     );
-    if (ok == true) _return.submit();
+    _pausedNow = false;
+    if (ok == true) {
+      _return.submit();
+    } else if (mounted && _return.phase == ReturnPhase.scanning) {
+      _reader.start(); // Back: keep reading
+    }
   }
 
   @override
@@ -235,28 +237,15 @@ class _ReturnScreenState extends State<ReturnScreen> {
                 Icon(Icons.sell_outlined, color: c.brandInk),
                 const SizedBox(width: D.space3),
                 Expanded(
-                  child: Text(
-                      _reader.reading
-                          ? 'Reading… add the items coming back. Tap Stop scanning when all are read.'
-                          : 'Items coming back: put them on the reader, then tap Scan.',
+                  child: Text('Items coming back: put them near the reader. They come in on their own.',
                       style: AltaiType.body.copyWith(color: c.ink)),
                 ),
                 const SizedBox(width: D.space3),
-                // One button: Scan starts the reader; while it reads it spins and says Stop scanning.
-                AltaiButton(_reader.reading ? 'Stop scanning' : 'Scan',
-                    onPressed: _toggleReading,
-                    loading: _reader.reading,
-                    variant: AltaiButtonVariant.primary,
-                    icon: _reader.reading ? null : Icons.sensors_rounded,
-                    large: true),
+                ReaderDot(on: _reader.reading),
               ]),
-              if (_reader.error case final e?) ...[
+              if (_reader.error != null) ...[
                 const SizedBox(height: D.space3),
-                Row(children: [
-                  Expanded(child: AltaiNotice(e, warning: true)),
-                  if (_reader.usb == ReaderState.needsPermission)
-                    TextButton(onPressed: _reader.allow, child: const Text('Allow')),
-                ]),
+                ReaderProblem(session: _reader),
               ],
               if (_return.message != null) ...[
                 const SizedBox(height: D.space3),
@@ -266,7 +255,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
               if (items.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: D.space6),
-                  child: Text('No items yet. Put the returned items on the reader and tap Scan.',
+                  child: Text('No items yet. Put the returned items near the reader.',
                       style: AltaiType.body.copyWith(color: c.inkMuted), textAlign: TextAlign.center),
                 ),
               for (final i in items)

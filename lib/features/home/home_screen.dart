@@ -54,7 +54,6 @@ class HomeScreen extends StatelessWidget {
           orders: orders,
           storeTags: storeTags,
           tagReader: tagReader,
-          autoRead: true,
           onBack: () => Navigator.of(context).pop(),
         ),
       ),
@@ -71,7 +70,6 @@ class HomeScreen extends StatelessWidget {
         staffName: staffName,
         catalog: catalog,
         tagReader: tagReader,
-        autoRead: true,
       ),
     ),
   );

@@ -156,9 +156,31 @@ class BasketController extends ChangeNotifier {
   int get unpricedCount =>
       _items.values.where((i) => i.state == ItemState.ok && priceLoaded(i) && priceOf(i) == null).length;
 
-  /// Tags left out of this basket: no product behind them, or taken out by the cashier. The reader
-  /// keeps reading while they're still on the pad, so they must not come back on the next round.
+  /// Tags with no product behind them, left out of this basket for good: the reader keeps reading
+  /// them while they're on the pad, so they must not come back on the next round.
   final Set<String> _leftOut = {};
+
+  /// Tags the cashier removed, with how many reader rounds in a row each one has been missing. Still
+  /// on the pad (read every round), a removed item stays out. Taken away for [comeBackAfter] rounds
+  /// (about 2 seconds) and then read again, it's added back: the customer wants it after all.
+  final Map<String, int> _removed = {};
+  static const comeBackAfter = 3;
+
+  /// One round of the USB reader: [epcs] is all it read this round, maybe nothing.
+  void readRound(List<String> epcs) {
+    final seen = parseTags(epcs.join(' ')).epcs.toSet();
+    for (final epc in _removed.keys.toList()) {
+      final missing = _removed[epc]!;
+      if (!seen.contains(epc)) {
+        _removed[epc] = missing + 1; // not on the pad this round
+      } else if (missing >= comeBackAfter) {
+        _removed.remove(epc); // it was away, now it's back: read it in again
+      } else {
+        _removed[epc] = 0; // still on the pad
+      }
+    }
+    if (seen.isNotEmpty) addText(epcs.join(' '));
+  }
 
   /// Text from the reader or a paste. Tags already in the basket are ignored, so a piece read
   /// several times by the pad still counts once.
@@ -168,7 +190,7 @@ class BasketController extends ChangeNotifier {
     var added = 0;
     var full = false;
     for (final epc in parsed.epcs) {
-      if (_items.containsKey(epc) || _leftOut.contains(epc)) continue;
+      if (_items.containsKey(epc) || _leftOut.contains(epc) || _removed.containsKey(epc)) continue;
       if (_items.length >= maxItems) {
         full = true;
         break;
@@ -184,11 +206,15 @@ class BasketController extends ChangeNotifier {
       );
       added++;
     }
-    message = full
-        ? 'A basket can hold $maxItems items.'
-        : parsed.invalid > 0
-        ? '${parsed.invalid} entry not recognised as a tag.'
-        : null;
+    // The reader reads the same items every round: only something new replaces the message, so an
+    // error ("can't be checked out on its own", unknown tags) stays until the cashier sees it.
+    if (full) {
+      message = 'A basket can hold $maxItems items.';
+    } else if (parsed.invalid > 0) {
+      message = '${parsed.invalid} entry not recognised as a tag.';
+    } else if (added > 0) {
+      message = null;
+    }
     if (added > 0) {
       _scheduleCheck();
       if (known != null) _loadCatalog();
@@ -198,7 +224,7 @@ class BasketController extends ChangeNotifier {
 
   void remove(String epc) {
     if (phase != BasketPhase.scanning) return;
-    if (_items.remove(epc) != null) _leftOut.add(epc); // still on the pad: don't read it back in
+    if (_items.remove(epc) != null) _removed[epc] = 0; // still on the pad: don't read it back in yet
     message = null;
     notifyListeners();
   }
@@ -209,6 +235,7 @@ class BasketController extends ChangeNotifier {
     _generation++;
     _items.clear();
     _leftOut.clear();
+    _removed.clear();
     _info.clear();
     _loading.clear();
     _clientRef = newClientRef();

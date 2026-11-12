@@ -49,14 +49,13 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600)); // the checkout slides in: no settling, it's reading
     expect(find.text('Checkout'), findsOneWidget); // straight to the checkout, no Scan page
-    expect(find.widgetWithText(AltaiButton, 'Stop scanning'), findsOneWidget); // reading already, no Scan tap
+    expect(find.text('Reader on'), findsOneWidget); // reading already: no Scan or Stop button at all
+    expect(find.widgetWithText(AltaiButton, 'Scan'), findsNothing);
+    expect(find.widgetWithText(AltaiButton, 'Stop scanning'), findsNothing);
     for (var i = 0; i < 3; i++) {
       await tester.pump(const Duration(milliseconds: 800)); // the item lands in the basket as it's read
     }
-    await tester.tap(find.widgetWithText(AltaiButton, 'Stop scanning'));
-    await tester.pump(const Duration(milliseconds: 800));
-    await tester.pump(const Duration(milliseconds: 600));
-    expect(find.widgetWithText(AltaiButton, 'Scan'), findsOneWidget); // stopped: Scan reads again
+    await tester.pump(const Duration(seconds: 1));
     expect(find.text('Classic Tee'), findsOneWidget);
     expect(find.text('Last read'), findsNothing);
     expect(find.textContaining('E280 1160'), findsNothing); // no EPCs on screen, only products
@@ -74,12 +73,10 @@ void main() {
     await open(tester);
     await tester.tap(find.text('Return / Refund'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600)); // it reads at once, so it never settles
+    await tester.pump(const Duration(milliseconds: 600)); // it reads at once
     expect(find.text('Return & refund'), findsOneWidget);
-    expect(find.widgetWithText(AltaiButton, 'Stop scanning'), findsOneWidget); // reading, no Scan tap
-    await tester.tap(find.widgetWithText(AltaiButton, 'Stop scanning'));
-    await tester.pump(const Duration(milliseconds: 800)); // the last round ends
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(AltaiButton, 'Scan'), findsOneWidget);
+    expect(find.text('Reader on'), findsOneWidget); // reading at once, nothing to tap
+    expect(find.widgetWithText(AltaiButton, 'Scan'), findsNothing);
+    expect(find.widgetWithText(AltaiButton, 'Stop scanning'), findsNothing);
   });
 }

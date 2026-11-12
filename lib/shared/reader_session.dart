@@ -5,7 +5,7 @@ import 'rfid_reader.dart';
 /// Drives the USB RFID reader for one screen (Checkout or Return): reads round after round and
 /// hands each round's tags to [onTags], until [stop] or until the screen closes ([dispose]).
 ///
-/// The screen calls [start] as soon as it opens, so the cashier doesn't tap Scan first. The screen's
+/// The screen calls [start] as soon as it opens and keeps it reading: the cashier never taps Scan. The screen's
 /// own list (the basket, the return) decides what a tag is; a tag read on every round is the
 /// screen's to ignore.
 class ReaderSession extends ChangeNotifier {
@@ -13,7 +13,8 @@ class ReaderSession extends ChangeNotifier {
 
   final TagReader reader;
 
-  /// The tags read in one round (upper-case hex). Called only while the screen is open.
+  /// The tags read in one round (upper-case hex), every round, even an empty one: the screen counts
+  /// the rounds a removed item has been away. Called only while the screen is open.
   final void Function(List<String> epcs) onTags;
 
   /// One read round of the USB reader.
@@ -68,7 +69,7 @@ class ReaderSession extends ChangeNotifier {
       }
       if (_closed) return false;
       if (usb != ReaderState.ready) {
-        error = 'No RFID reader. Plug the reader into the tablet, then tap Scan.';
+        error = 'No RFID reader. Plug the reader into the tablet, then tap Retry.';
         _changed();
         return false;
       }
@@ -80,7 +81,7 @@ class ReaderSession extends ChangeNotifier {
     return true;
   }
 
-  /// Stops reading. What the round in progress reads still comes in.
+  /// Stops reading. What the round in progress reads is dropped.
   void stop() {
     if (!reading) return;
     reading = false;
@@ -101,8 +102,9 @@ class ReaderSession extends ChangeNotifier {
         checkReader();
         return;
       }
-      if (_closed) return;
-      if (got.isNotEmpty) onTags(got); // keep the last round's tags, even after Stop scanning
+      // Stopped meanwhile (the confirm box, another screen): what's on screen stays as it is.
+      if (_closed || run != _run) return;
+      onTags(got);
     }
   }
 

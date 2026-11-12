@@ -138,6 +138,35 @@ void main() {
     expect(basket.canComplete, isTrue);
   });
 
+  test('a removed item stays out while it is on the pad, and comes back once taken away and put back', () async {
+    basket.readRound([tagA, tagB]);
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    basket.remove(tagA);
+    expect(basket.items.map((i) => i.epc), [tagB]);
+
+    for (var i = 0; i < 5; i++) {
+      basket.readRound([tagA, tagB]); // still on the pad: stays out
+    }
+    expect(basket.items.map((i) => i.epc), [tagB]);
+
+    for (var i = 0; i < BasketController.comeBackAfter; i++) {
+      basket.readRound([tagB]); // taken off the pad
+    }
+    basket.readRound([tagA, tagB]); // put back: the customer wants it after all
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(basket.items.map((i) => i.epc), containsAll([tagA, tagB]));
+  });
+
+  test('a removed item missing for a round or two (the pad\'s edge) stays out', () {
+    basket.readRound([tagA]);
+    basket.remove(tagA);
+    basket.readRound([]);
+    basket.readRound([tagA]);
+    basket.readRound([]);
+    basket.readRound([tagA]);
+    expect(basket.items, isEmpty);
+  });
+
   test('a tag with no product is left out, with a note; the sale goes on', () async {
     api.tag = (epc) => {'epc': epc, 'found': epc == tagA, 'store_id': '12'};
     await scan('$tagA $tagB');
@@ -187,6 +216,13 @@ void main() {
     expect(basket.phase, BasketPhase.scanning);
     expect(basket.message, 'Tag not in store');
     expect(basket.canComplete, isTrue);
+
+    // The reader goes on reading the same items: the message stays until something new comes in.
+    basket.readRound([tagA]);
+    basket.readRound([tagA]);
+    expect(basket.message, 'Tag not in store');
+    basket.readRound([tagA, tagB]);
+    expect(basket.message, isNull);
   });
 
   test('next customer gets a new ref and an empty basket', () async {

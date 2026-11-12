@@ -40,6 +40,7 @@ class OrderScanController extends ChangeNotifier {
   final Map<String, List<String>> _accepted = {}; // sku → tags, in scan order
   /// Tags with no product, left out.
   int ignoredUnknown = 0;
+  final Set<String> _unknown = {}; // the reader reads them every round: checked once only
 
   final List<RejectedTag> rejected = [];
   final Set<String> _checking = {};
@@ -54,7 +55,10 @@ class OrderScanController extends ChangeNotifier {
   bool get allMatched => _checking.isEmpty && order.lines.every((l) => l.exempt || scannedOf(l.sku) == l.qty);
 
   bool _seen(String epc) =>
-      _checking.contains(epc) || _accepted.values.any((t) => t.contains(epc)) || rejected.any((r) => r.epc == epc);
+      _checking.contains(epc) ||
+      _unknown.contains(epc) ||
+      _accepted.values.any((t) => t.contains(epc)) ||
+      rejected.any((r) => r.epc == epc);
 
   /// Text from the reader or the keyboard. Tags read again are ignored.
   void addText(String text) {
@@ -64,7 +68,13 @@ class OrderScanController extends ChangeNotifier {
       for (final e in parsed.epcs)
         if (!_seen(e)) e,
     ];
-    message = parsed.invalid > 0 ? '${parsed.invalid} entry not recognised as a tag.' : null;
+    // The reader reads the same items every round: only something new replaces the message, so an
+    // error ("Could not complete the order") stays until the cashier sees it.
+    if (parsed.invalid > 0) {
+      message = '${parsed.invalid} entry not recognised as a tag.';
+    } else if (fresh.isNotEmpty) {
+      message = null;
+    }
     if (fresh.isNotEmpty) {
       _checking.addAll(fresh);
       _queue = _queue.then((_) => _check(fresh));
@@ -87,6 +97,7 @@ class OrderScanController extends ChangeNotifier {
         final item = itemFromInspection(t, storeId);
         _checking.remove(item.epc);
         if (t['found'] == false) {
+          _unknown.add(item.epc);
           ignoredUnknown++; // no product behind this tag: not an item of any order
           continue;
         }

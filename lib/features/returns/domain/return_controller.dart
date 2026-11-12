@@ -28,7 +28,8 @@ BasketItem returnItemFromInspection(Map<String, dynamic> t) {
       problem: problem,
       productName: t['product_name'] as String?,
       variation: t['variation'] as String?,
-      sku: t['sku'] as String?);
+      sku: t['sku'] as String?,
+      multiplier: (t['multiplier'] as int?) ?? 1);
 
   if (t['found'] == false) return item(ItemState.problem, 'Not registered to any product');
   if (t['found'] != true) return item(ItemState.problem, 'Could not check this tag');
@@ -267,6 +268,16 @@ class ReturnController extends ChangeNotifier {
       receiptNo: receiptNo.trim(), reason: reason ?? '', staffName: staffName, clientRef: _clientRef);
 
   /// Saves the adjustment, then approves it. Try again after a problem picks up where it stopped.
+  /// Bundle SKUs (a tag that counts as several pieces) and how many pieces come back: 1 per tag,
+  /// the same as a checkout takes out. Normal SKUs aren't listed; they already go back 1 per tag.
+  Map<String, int> get bundleQtys {
+    final qtys = <String, int>{};
+    for (final i in _items.values) {
+      if (i.multiplier > 1 && i.sku != null) qtys[i.sku!] = (qtys[i.sku!] ?? 0) + 1;
+    }
+    return qtys;
+  }
+
   Future<void> submit() async {
     if (phase == ReturnPhase.scanning && !canSubmit) return;
     if (phase != ReturnPhase.scanning && phase != ReturnPhase.retry && phase != ReturnPhase.notApproved) return;
@@ -280,7 +291,8 @@ class ReturnController extends ChangeNotifier {
       try {
         // After no answer the first save may have gone through: look for it before saving again.
         final found = from == ReturnPhase.retry ? await api.findByRef(storeId, _clientRef) : null;
-        trxId = found ?? await api.save(storeId: storeId, epcs: _items.keys.toList(), remark: _remark);
+        trxId = found ??
+            await api.save(storeId: storeId, epcs: _items.keys.toList(), remark: _remark, qtys: bundleQtys);
       } on ApiException catch (e) {
         message = _markStillInStock(e.message) ?? e.message;
         // Refused: nothing saved, staff can fix it and send again. No answer: may be saved, check first.

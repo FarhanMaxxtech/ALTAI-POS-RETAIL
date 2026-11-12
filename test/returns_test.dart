@@ -122,6 +122,29 @@ void main() {
     expect(team.bodies['Stock/AdjustmentApproveNoScan']!['id'], '77');
   });
 
+  test('a bundle tag (5 pieces) comes back as 1 piece per tag, like the checkout took out', () async {
+    final team = FakeTeam()
+      ..override = (p) => p == 'Stock/TagLookup'
+          ? json({'sku': 'RG-AU-05-PD', 'productName': 'Ring', 'multiplier': 5})
+          : null;
+    final r = await readyReturn(team);
+    r.addText('E2801160000000B2');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await r.submit();
+
+    expect(r.phase, ReturnPhase.done);
+    expect(team.bodies['Stock/Adjustment']!['qtys'], [
+      {'sku': 'RG-AU-05-PD', 'qty': 2},
+    ]);
+  });
+
+  test('normal items: no qtys sent, 1 per tag as before', () async {
+    final team = FakeTeam();
+    final r = await readyReturn(team);
+    await r.submit();
+    expect(team.bodies['Stock/Adjustment']!.containsKey('qtys'), isFalse);
+  });
+
   test('approval refused: stays saved, Try again approves the same one', () async {
     final team = FakeTeam();
     var refuse = true;

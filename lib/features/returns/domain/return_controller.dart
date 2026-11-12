@@ -113,13 +113,17 @@ class ReturnController extends ChangeNotifier {
       .where((i) => i.state == ItemState.ok && i.sku != null && _info.containsKey(i.sku) && priceOf(i) == null)
       .length;
 
+  /// Tags left out of this return: no product behind them, or taken out by the cashier. The reader
+  /// keeps reading while they're still on the pad, so they must not come back on the next round.
+  final Set<String> _leftOut = {};
+
   void addText(String text) {
     if (phase != ReturnPhase.scanning) return;
     final parsed = parseTags(text);
     var added = 0;
     var full = false;
     for (final epc in parsed.epcs) {
-      if (_items.containsKey(epc)) continue;
+      if (_items.containsKey(epc) || _leftOut.contains(epc)) continue;
       if (_items.length >= maxItems) {
         full = true;
         break;
@@ -138,7 +142,7 @@ class ReturnController extends ChangeNotifier {
 
   void remove(String epc) {
     if (phase != ReturnPhase.scanning) return;
-    _items.remove(epc);
+    if (_items.remove(epc) != null) _leftOut.add(epc); // still on the pad: don't read it back in
     message = null;
     notifyListeners();
   }
@@ -160,6 +164,7 @@ class ReturnController extends ChangeNotifier {
     _timer?.cancel();
     _generation++;
     _items.clear();
+    _leftOut.clear();
     _info.clear();
     _clientRef = newClientRef();
     phase = ReturnPhase.scanning;
@@ -191,6 +196,7 @@ class ReturnController extends ChangeNotifier {
           if (t['found'] == false) {
             // No product behind this tag: not an item coming back, so it's left out.
             if (_items.remove(t['epc']) != null) {
+              _leftOut.add(t['epc'] as String);
               ignoredUnknown++;
               message = '${ignoredUnknown == 1 ? '1 unknown tag' : '$ignoredUnknown unknown tags'} ignored (no product).';
             }

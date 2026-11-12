@@ -8,6 +8,7 @@ import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
 import '../../../shared/keyboard.dart';
+import '../../../shared/reader_session.dart';
 import '../../../shared/rfid_reader.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../orders/data/orders_api.dart';
@@ -22,11 +23,11 @@ import '../domain/basket.dart';
 import '../domain/basket_controller.dart';
 import '../domain/checkout_summary.dart';
 import 'recent_screen.dart';
-import 'scan_page.dart';
 
 /// The tablet's main screen: read the items, check them, record the sale.
 ///
-/// Items come in through the Scan page, which drives the USB RFID reader.
+/// Items come in straight from the USB RFID reader: with [autoRead] it starts reading as soon as the
+/// screen opens, and each tag lands in the basket as it's read (no separate Scan page).
 class BasketScreen extends StatefulWidget {
   const BasketScreen({
     super.key,
@@ -44,6 +45,7 @@ class BasketScreen extends StatefulWidget {
     this.askReceiptOnScan = false,
     this.tagReader = const UsbTagReader(),
     this.storeTags,
+    this.autoRead = false,
   });
 
   final CheckoutApi api;
@@ -76,11 +78,15 @@ class BasketScreen extends StatefulWidget {
   /// tags are checked in the background (the wait is hidden behind something useful).
   final bool askReceiptOnScan;
 
-  /// The USB RFID reader the Scan page drives.
+  /// The USB RFID reader this screen drives.
   final TagReader tagReader;
 
   /// The store's tags kept on the tablet, so scanned pieces show their names at once. Null = none.
   final StoreTags? storeTags;
+
+  /// Start reading as soon as the screen opens (and again for the next customer), so the cashier
+  /// doesn't tap Scan first.
+  final bool autoRead;
 
   @override
   State<BasketScreen> createState() => _BasketScreenState();
@@ -122,6 +128,10 @@ class _BasketScreenState extends State<BasketScreen> {
   );
   final _receipt = TextEditingController();
   final _beeper = Beeper();
+  late final ReaderSession _reader = ReaderSession(
+    reader: widget.tagReader,
+    onTags: (epcs) => _basket.addText(epcs.join(' ')),
+  );
 
   int _lastCount = 0; // how many items were in the basket last time
   final Map<String, int> _lastQty = {}; // sku → qty last time, to notice which line grew
@@ -138,7 +148,32 @@ class _BasketScreenState extends State<BasketScreen> {
     super.initState();
     _basket.findByEnding = widget.orders != null; // today's StoreHub sales can be searched
     _basket.addListener(_onBasketChanged);
+    _reader.addListener(_onReaderChanged);
     if (widget.initialTags.isNotEmpty) _basket.addText(widget.initialTags.join(' '));
+    if (widget.autoRead) _reader.start();
+  }
+
+  void _onReaderChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Scan starts the reader; the same button (Stop scanning) stops it.
+  void _toggleReading() {
+    if (_reader.reading) {
+      _reader.stop();
+    } else {
+      _reader.start();
+    }
+  }
+
+  /// Opens another screen with the reader paused (so its tags don't land in this basket), and reads
+  /// again on the way back if it was reading.
+  Future<T?> _paused<T>(Future<T?> Function() open) async {
+    final wasReading = _reader.reading;
+    _reader.stop();
+    final result = await open();
+    if (wasReading && mounted && _basket.phase == BasketPhase.scanning) _reader.start();
+    return result;
   }
 
   /// Back to the start page. Scanned items not yet sold are cleared, so ask first.
@@ -171,6 +206,8 @@ class _BasketScreenState extends State<BasketScreen> {
   void dispose() {
     _flashTimer?.cancel();
     _readingTimer?.cancel();
+    _reader.removeListener(_onReaderChanged);
+    _reader.dispose();
     _basket.removeListener(_onBasketChanged);
     _basket.dispose();
     _receipt.dispose();
@@ -253,15 +290,6 @@ class _BasketScreenState extends State<BasketScreen> {
       _receipt.text = result;
       _basket.setReceipt(result);
     }
-  }
-
-  /// The Scan page: items on the reader, press Scan, all of them come back here at once.
-  Future<void> _openScanPage() async {
-    final tags = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, known: widget.storeTags, inspector: widget.api, autoStart: true)),
-    );
-    if (!mounted) return;
-    if (tags != null && tags.isNotEmpty) _basket.addText(tags.join(' '));
   }
 
   /// The cashier typed the last 4 digits: find today's StoreHub sale that ends with them, among
@@ -362,6 +390,7 @@ class _BasketScreenState extends State<BasketScreen> {
     _askedReceipt = false;
     _lastCount = 0;
     _lastQty.clear();
+    if (widget.autoRead) _reader.start();
   }
 
   void _changeStore() {
@@ -375,10 +404,11 @@ class _BasketScreenState extends State<BasketScreen> {
   }
 
   void _openReturns(ReturnsApi returns) {
-    Navigator.of(context)
+    _paused(() => Navigator.of(context)
         .push(
           MaterialPageRoute(
             builder: (_) => ReturnScreen(
+              autoRead: widget.autoRead,
               tagReader: widget.tagReader,
               inspector: widget.api,
               api: returns,
@@ -388,7 +418,7 @@ class _BasketScreenState extends State<BasketScreen> {
               catalog: widget.catalog,
             ),
           ),
-        );
+        ));
   }
 
   /// Exchange, step 1: the items coming back (the return screen). Step 2 is this basket, for the new items.
@@ -399,10 +429,11 @@ class _BasketScreenState extends State<BasketScreen> {
       ).showSnackBar(const SnackBar(content: Text('Clear or complete this basket before starting an exchange.')));
       return;
     }
-    final returned = await Navigator.of(context).push<ExchangeReturn>(
+    final returned = await _paused(() => Navigator.of(context).push<ExchangeReturn>(
       MaterialPageRoute(
         builder: (_) => ReturnScreen(
-              tagReader: widget.tagReader,
+          autoRead: widget.autoRead,
+          tagReader: widget.tagReader,
           inspector: widget.api,
           api: returns,
           storeId: widget.storeId,
@@ -412,9 +443,12 @@ class _BasketScreenState extends State<BasketScreen> {
           exchange: true,
         ),
       ),
-    );
+    ));
     if (!mounted) return;
-    if (returned != null) _basket.startExchange(returned);
+    if (returned != null) {
+      _basket.startExchange(returned);
+      if (widget.autoRead) _reader.start(); // step 2: the new items
+    }
   }
 
   /// The money that changes hands in an exchange, or null when this basket isn't one.
@@ -425,7 +459,7 @@ class _BasketScreenState extends State<BasketScreen> {
   }
 
   void _openOrders(OrdersApi orders) {
-    Navigator.of(context)
+    _paused(() => Navigator.of(context)
         .push(
           MaterialPageRoute(
             builder: (_) => OrdersScreen(
@@ -437,11 +471,11 @@ class _BasketScreenState extends State<BasketScreen> {
               staffName: widget.staffName,
             ),
           ),
-        );
+        ));
   }
 
   void _openRecent() {
-    Navigator.of(context)
+    _paused(() => Navigator.of(context)
         .push(
           MaterialPageRoute(
             builder: (_) => RecentScreen(
@@ -451,7 +485,7 @@ class _BasketScreenState extends State<BasketScreen> {
               catalog: widget.catalog,
             ),
           ),
-        );
+        ));
   }
 
   @override
@@ -760,23 +794,37 @@ class _BasketScreenState extends State<BasketScreen> {
               const SizedBox(width: D.space2),
               Expanded(
                 child: Text(
-                  'Put the items on the reader, then tap Scan.',
+                  _reader.reading
+                      ? 'Reading… add or move items. Tap Stop scanning when all are read.'
+                      : 'Put the items on the reader, then tap Scan.',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AltaiType.label.copyWith(color: c.ink),
                 ),
               ),
               const SizedBox(width: D.space3),
+              // One button: Scan starts the reader; while it reads it spins and says Stop scanning.
               AltaiButton(
-                'Scan',
-                onPressed: _openScanPage,
+                _reader.reading ? 'Stop scanning' : 'Scan',
+                onPressed: _toggleReading,
+                loading: _reader.reading,
                 variant: AltaiButtonVariant.primary,
-                icon: Icons.sensors_rounded,
+                icon: _reader.reading ? null : Icons.sensors_rounded,
               ),
               const SizedBox(width: D.space3),
               ReaderStatusPill(reading: _reading),
             ],
           ),
+          if (_reader.error case final e?) ...[
+            const SizedBox(height: D.space2),
+            Row(
+              children: [
+                Expanded(child: AltaiNotice(e, warning: true)),
+                if (_reader.usb == ReaderState.needsPermission)
+                  TextButton(onPressed: _reader.allow, child: const Text('Allow')),
+              ],
+            ),
+          ],
           if (problemCount > 0) ...[
             const SizedBox(height: D.space2),
             Padding(
@@ -926,6 +974,7 @@ class _BasketScreenState extends State<BasketScreen> {
 
   /// Last look before the sale is recorded: Complete changes live stock and can't be undone.
   Future<void> _confirm(List<_Line> lines) async {
+    _reader.stop(); // what's on screen is what gets sold: no new tags while the cashier checks it
     // Was this receipt already used? A second sale on it is fine (more items), a repeat isn't.
     var earlier = const <CheckoutSummary>[];
     var couldNotCheck = false;

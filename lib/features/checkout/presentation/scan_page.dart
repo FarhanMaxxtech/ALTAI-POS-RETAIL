@@ -26,7 +26,6 @@ class ScanPage extends StatefulWidget {
     this.allowedSkus,
     this.title = 'Scan items',
     this.round = const Duration(milliseconds: 800),
-    this.autoStart = false,
   });
 
   /// The USB RFID reader.
@@ -50,9 +49,6 @@ class ScanPage extends StatefulWidget {
   /// One read round of the USB reader (it reads round after round until stopped).
   final Duration round;
 
-  /// Start reading as soon as the page opens, so the cashier doesn't have to tap Scan.
-  final bool autoStart;
-
   @override
   State<ScanPage> createState() => _ScanPageState();
 }
@@ -71,9 +67,7 @@ class _ScanPageState extends State<ScanPage> {
   @override
   void initState() {
     super.initState();
-    _checkReader().then((_) {
-      if (mounted && widget.autoStart && _usb == ReaderState.ready) _scan();
-    });
+    _checkReader();
   }
 
   @override

@@ -21,26 +21,30 @@ class FakeTagReader implements TagReader {
   }
 }
 
-/// What the cashier does on Checkout: Scan → (Scan, if the page didn't start reading by itself) →
-/// Stop scanning → Add to basket. Pumps a fixed time instead of
-/// settling, because the basket's "checking" spinners never settle.
+/// What the cashier does to read items: Checkout and Return read straight into their list (Scan,
+/// unless the screen already reads, then Stop scanning); the StoreHub orders Scan page needs its own
+/// Scan and "Add N to …". Pumps a fixed time instead of settling: the reader and the basket's
+/// "checking" spinners never settle.
 Future<void> scanWithReader(WidgetTester tester, FakeTagReader reader, List<String> epcs) async {
   reader.next
     ..clear()
     ..addAll(epcs);
-  await tester.tap(find.widgetWithText(AltaiButton, 'Scan'));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 600)); // the page slides in
-  // Checkout and Return start reading by themselves; other Scan pages (StoreHub orders) need the tap.
-  if (find.widgetWithText(AltaiButton, 'Stop scanning').evaluate().isEmpty) {
-    await tester.tap(find.widgetWithText(AltaiButton, 'Scan').last); // .last = the Scan page on top
+  Finder stop() => find.widgetWithText(AltaiButton, 'Stop scanning');
+  if (stop().evaluate().isEmpty) {
+    await tester.tap(find.widgetWithText(AltaiButton, 'Scan').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600)); // a Scan page slides in (StoreHub orders)
+    if (stop().evaluate().isEmpty) await tester.tap(find.widgetWithText(AltaiButton, 'Scan').last);
   }
   for (var i = 0; i < 3; i++) {
     await tester.pump(const Duration(milliseconds: 800)); // the reader keeps reading…
   }
-  await tester.tap(find.widgetWithText(AltaiButton, 'Stop scanning')); // …until the cashier stops it
+  await tester.tap(stop()); // …until the cashier stops it
   await tester.pump(const Duration(milliseconds: 800));
-  await tester.tap(find.textContaining(RegExp(r'^Add \d+ to ')));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 600)); // back on Checkout
+  final add = find.textContaining(RegExp(r'^Add \d+ to '));
+  if (add.evaluate().isNotEmpty) {
+    await tester.tap(add); // the Scan page hands its tags back
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+  }
 }

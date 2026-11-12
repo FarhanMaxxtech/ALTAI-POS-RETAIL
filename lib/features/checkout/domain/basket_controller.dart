@@ -156,6 +156,10 @@ class BasketController extends ChangeNotifier {
   int get unpricedCount =>
       _items.values.where((i) => i.state == ItemState.ok && priceLoaded(i) && priceOf(i) == null).length;
 
+  /// Tags left out of this basket: no product behind them, or taken out by the cashier. The reader
+  /// keeps reading while they're still on the pad, so they must not come back on the next round.
+  final Set<String> _leftOut = {};
+
   /// Text from the reader or a paste. Tags already in the basket are ignored, so a piece read
   /// several times by the pad still counts once.
   void addText(String text) {
@@ -164,7 +168,7 @@ class BasketController extends ChangeNotifier {
     var added = 0;
     var full = false;
     for (final epc in parsed.epcs) {
-      if (_items.containsKey(epc)) continue;
+      if (_items.containsKey(epc) || _leftOut.contains(epc)) continue;
       if (_items.length >= maxItems) {
         full = true;
         break;
@@ -194,7 +198,7 @@ class BasketController extends ChangeNotifier {
 
   void remove(String epc) {
     if (phase != BasketPhase.scanning) return;
-    _items.remove(epc);
+    if (_items.remove(epc) != null) _leftOut.add(epc); // still on the pad: don't read it back in
     message = null;
     notifyListeners();
   }
@@ -204,6 +208,7 @@ class BasketController extends ChangeNotifier {
     _timer?.cancel();
     _generation++;
     _items.clear();
+    _leftOut.clear();
     _info.clear();
     _loading.clear();
     _clientRef = newClientRef();
@@ -274,6 +279,7 @@ class BasketController extends ChangeNotifier {
     if (t['found'] == false) {
       // No product behind this tag (a loose or test tag): not an item, so it's left out.
       _items.remove(epc);
+      _leftOut.add(epc);
       ignoredUnknown++;
       message = '${ignoredUnknown == 1 ? '1 unknown tag' : '$ignoredUnknown unknown tags'} ignored (no product).';
       return;

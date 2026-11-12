@@ -7,14 +7,13 @@ import '../catalog/data/catalog_api.dart';
 import '../checkout/data/checkout_api.dart';
 import '../checkout/data/store_tags.dart';
 import '../checkout/presentation/basket_screen.dart';
-import '../checkout/presentation/scan_page.dart';
 import '../orders/data/orders_api.dart';
 import '../returns/data/returns_api.dart';
 import '../returns/presentation/return_screen.dart';
 
 /// The first page after login: the cashier picks what to do.
-///   - Scan for Checkout: scan the items, then the checkout opens with them.
-///   - Return / Refund: items coming back into stock.
+///   - Scan for Checkout: the checkout opens and starts reading the items on the reader at once.
+///   - Return / Refund: items coming back into stock, also read at once.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
     super.key,
@@ -41,13 +40,8 @@ class HomeScreen extends StatelessWidget {
   final StoreTags? storeTags;
   final TagReader tagReader;
 
+  /// One tap: the checkout opens and reads straight away (no Scan page in between).
   Future<void> _checkout(BuildContext context) async {
-    final tags = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(
-        builder: (_) => ScanPage(reader: tagReader, known: storeTags, inspector: api, title: 'Scan for checkout', autoStart: true),
-      ),
-    );
-    if (tags == null || tags.isEmpty || !context.mounted) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (context) => BasketScreen(
@@ -60,7 +54,7 @@ class HomeScreen extends StatelessWidget {
           orders: orders,
           storeTags: storeTags,
           tagReader: tagReader,
-          initialTags: tags,
+          autoRead: true,
           onBack: () => Navigator.of(context).pop(),
         ),
       ),
@@ -77,6 +71,7 @@ class HomeScreen extends StatelessWidget {
         staffName: staffName,
         catalog: catalog,
         tagReader: tagReader,
+        autoRead: true,
       ),
     ),
   );

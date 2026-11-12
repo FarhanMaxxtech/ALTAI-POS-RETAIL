@@ -5,8 +5,8 @@ import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
 import '../../../shared/keyboard.dart';
+import '../../../shared/reader_session.dart';
 import '../../../shared/rfid_reader.dart';
-import '../../checkout/presentation/scan_page.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../checkout/data/checkout_api.dart';
 import '../../checkout/domain/basket.dart';
@@ -19,7 +19,8 @@ import '../domain/return_controller.dart';
 /// With [exchange] it's step 1 of an exchange: once the items are back in stock the screen closes and
 /// hands an [ExchangeReturn] to the checkout, where the new items are scanned.
 ///
-/// The items coming back are read with the Scan page (the USB RFID reader), like at checkout.
+/// The items coming back are read straight from the USB RFID reader into the list, like at checkout:
+/// with [autoRead] it starts reading as soon as the screen opens.
 class ReturnScreen extends StatefulWidget {
   const ReturnScreen({
     super.key,
@@ -31,6 +32,7 @@ class ReturnScreen extends StatefulWidget {
     this.catalog,
     this.exchange = false,
     this.tagReader = const UsbTagReader(),
+    this.autoRead = false,
   });
 
   final CheckoutApi inspector;
@@ -43,8 +45,11 @@ class ReturnScreen extends StatefulWidget {
   /// Step 1 of an exchange: closes with an [ExchangeReturn] once the items are back in stock.
   final bool exchange;
 
-  /// The USB RFID reader the Scan page drives.
+  /// The USB RFID reader this screen drives.
   final TagReader tagReader;
+
+  /// Start reading as soon as the screen opens (and again for a new return).
+  final bool autoRead;
 
   @override
   State<ReturnScreen> createState() => _ReturnScreenState();
@@ -59,6 +64,8 @@ class _ReturnScreenState extends State<ReturnScreen> {
       catalog: widget.catalog);
   final _receipt = TextEditingController();
   final _beeper = Beeper();
+  late final ReaderSession _reader =
+      ReaderSession(reader: widget.tagReader, onTags: (epcs) => _return.addText(epcs.join(' ')));
   int _lastCount = 0;
   bool _handedBack = false; // exchange: the result is passed back once
 
@@ -68,10 +75,27 @@ class _ReturnScreenState extends State<ReturnScreen> {
   void initState() {
     super.initState();
     _return.addListener(_onChanged);
+    _reader.addListener(_onReaderChanged);
+    if (widget.autoRead) _reader.start();
+  }
+
+  void _onReaderChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Scan starts the reader; the same button (Stop scanning) stops it.
+  void _toggleReading() {
+    if (_reader.reading) {
+      _reader.stop();
+    } else {
+      _reader.start();
+    }
   }
 
   @override
   void dispose() {
+    _reader.removeListener(_onReaderChanged);
+    _reader.dispose();
     _return.removeListener(_onChanged);
     _return.dispose();
     _receipt.dispose();
@@ -101,18 +125,11 @@ class _ReturnScreenState extends State<ReturnScreen> {
     }
   }
 
-  /// The Scan page: the returned items on the reader, Scan, and they all come back here.
-  Future<void> _scanItems() async {
-    final tags = await Navigator.of(context).push<List<String>>(
-        MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, inspector: widget.inspector, target: 'return', autoStart: true)));
-    if (!mounted) return;
-    if (tags != null && tags.isNotEmpty) _return.addText(tags.join(' '));
-  }
-
   void _newReturn() {
     _return.reset();
     _receipt.clear();
     _lastCount = 0;
+    if (widget.autoRead) _reader.start();
   }
 
   /// A return that may be half done stays on screen until it's finished.
@@ -128,6 +145,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
 
   /// Last look: this changes live stock and can't be undone from the tablet.
   Future<void> _confirm() async {
+    _reader.stop(); // what's on screen is what comes back: no new tags while the cashier checks it
     final c = context.altai;
     final ok = await showDialog<bool>(
       context: context,
@@ -212,21 +230,34 @@ class _ReturnScreenState extends State<ReturnScreen> {
                 onChanged: _return.setReceipt,
               ),
               const SizedBox(height: D.space4),
-              // 2. The items coming back: read with the Scan page.
+              // 2. The items coming back: read straight into the list below.
               Row(children: [
                 Icon(Icons.sell_outlined, color: c.brandInk),
                 const SizedBox(width: D.space3),
                 Expanded(
-                  child: Text('Items coming back: put them on the reader, then tap Scan.',
+                  child: Text(
+                      _reader.reading
+                          ? 'Reading… add the items coming back. Tap Stop scanning when all are read.'
+                          : 'Items coming back: put them on the reader, then tap Scan.',
                       style: AltaiType.body.copyWith(color: c.ink)),
                 ),
                 const SizedBox(width: D.space3),
-                AltaiButton('Scan',
-                    onPressed: _scanItems,
+                // One button: Scan starts the reader; while it reads it spins and says Stop scanning.
+                AltaiButton(_reader.reading ? 'Stop scanning' : 'Scan',
+                    onPressed: _toggleReading,
+                    loading: _reader.reading,
                     variant: AltaiButtonVariant.primary,
-                    icon: Icons.sensors_rounded,
+                    icon: _reader.reading ? null : Icons.sensors_rounded,
                     large: true),
               ]),
+              if (_reader.error case final e?) ...[
+                const SizedBox(height: D.space3),
+                Row(children: [
+                  Expanded(child: AltaiNotice(e, warning: true)),
+                  if (_reader.usb == ReaderState.needsPermission)
+                    TextButton(onPressed: _reader.allow, child: const Text('Allow')),
+                ]),
+              ],
               if (_return.message != null) ...[
                 const SizedBox(height: D.space3),
                 AltaiNotice(_return.message!),

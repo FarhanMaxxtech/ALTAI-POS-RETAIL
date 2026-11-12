@@ -21,7 +21,8 @@ class FakeTagReader implements TagReader {
   }
 }
 
-/// What the cashier does on Checkout: Scan → Scan → Add to basket. Pumps a fixed time instead of
+/// What the cashier does on Checkout: Scan → (Scan, if the page didn't start reading by itself) →
+/// Stop scanning → Add to basket. Pumps a fixed time instead of
 /// settling, because the basket's "checking" spinners never settle.
 Future<void> scanWithReader(WidgetTester tester, FakeTagReader reader, List<String> epcs) async {
   reader.next
@@ -30,7 +31,10 @@ Future<void> scanWithReader(WidgetTester tester, FakeTagReader reader, List<Stri
   await tester.tap(find.widgetWithText(AltaiButton, 'Scan'));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 600)); // the page slides in
-  await tester.tap(find.widgetWithText(AltaiButton, 'Scan'));
+  // Checkout and Return start reading by themselves; other Scan pages (StoreHub orders) need the tap.
+  if (find.widgetWithText(AltaiButton, 'Stop scanning').evaluate().isEmpty) {
+    await tester.tap(find.widgetWithText(AltaiButton, 'Scan').last); // .last = the Scan page on top
+  }
   for (var i = 0; i < 3; i++) {
     await tester.pump(const Duration(milliseconds: 800)); // the reader keeps reading…
   }

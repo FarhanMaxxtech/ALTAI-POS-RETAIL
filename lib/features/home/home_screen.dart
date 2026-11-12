@@ -44,7 +44,7 @@ class HomeScreen extends StatelessWidget {
   Future<void> _checkout(BuildContext context) async {
     final tags = await Navigator.of(context).push<List<String>>(
       MaterialPageRoute(
-        builder: (_) => ScanPage(reader: tagReader, known: storeTags, inspector: api, title: 'Scan for checkout'),
+        builder: (_) => ScanPage(reader: tagReader, known: storeTags, inspector: api, title: 'Scan for checkout', autoStart: true),
       ),
     );
     if (tags == null || tags.isEmpty || !context.mounted) return;

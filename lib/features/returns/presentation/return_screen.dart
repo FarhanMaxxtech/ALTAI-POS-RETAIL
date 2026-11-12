@@ -104,7 +104,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
   /// The Scan page: the returned items on the reader, Scan, and they all come back here.
   Future<void> _scanItems() async {
     final tags = await Navigator.of(context).push<List<String>>(
-        MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, inspector: widget.inspector, target: 'return')));
+        MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, inspector: widget.inspector, target: 'return', autoStart: true)));
     if (!mounted) return;
     if (tags != null && tags.isNotEmpty) _return.addText(tags.join(' '));
   }

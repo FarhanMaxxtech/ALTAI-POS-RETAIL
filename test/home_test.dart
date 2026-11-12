@@ -44,9 +44,10 @@ void main() {
     await open(tester);
     reader.next.addAll(['E2801160000000A1']);
     await tester.tap(find.text('Scan for Checkout'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600)); // the page slides in: no settling, it's reading
     expect(find.text('Scan for checkout'), findsOneWidget); // the scan page
-    await tester.tap(find.widgetWithText(AltaiButton, 'Scan'));
+    expect(find.widgetWithText(AltaiButton, 'Stop scanning'), findsOneWidget); // reading already, no Scan tap
     for (var i = 0; i < 3; i++) {
       await tester.pump(const Duration(milliseconds: 800));
     }

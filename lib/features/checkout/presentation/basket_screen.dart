@@ -258,7 +258,7 @@ class _BasketScreenState extends State<BasketScreen> {
   /// The Scan page: items on the reader, press Scan, all of them come back here at once.
   Future<void> _openScanPage() async {
     final tags = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, known: widget.storeTags, inspector: widget.api)),
+      MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, known: widget.storeTags, inspector: widget.api, autoStart: true)),
     );
     if (!mounted) return;
     if (tags != null && tags.isNotEmpty) _basket.addText(tags.join(' '));

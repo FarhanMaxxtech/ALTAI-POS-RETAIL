@@ -16,6 +16,7 @@ class LoginScreen extends StatefulWidget {
     required this.location,
     required this.onLocationSet,
     required this.onLoggedIn,
+    this.notice,
   });
 
   final AuthApi auth;
@@ -24,6 +25,9 @@ class LoginScreen extends StatefulWidget {
   final Store? location;
   final void Function(Store store) onLocationSet;
   final void Function(Staff staff) onLoggedIn;
+
+  /// Why the login screen is back, e.g. the session ended. Shown until the next try.
+  final String? notice;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -34,7 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _password = TextEditingController();
   bool _busy = false;
   bool _hidePassword = true;
-  String? _error;
+  late String? _error = widget.notice;
 
   @override
   void dispose() {

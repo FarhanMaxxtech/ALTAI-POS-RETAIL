@@ -88,6 +88,30 @@ void main() {
         throwsA(isA<ApiException>().having((e) => e.sessionExpired, 'sessionExpired', true)));
   });
 
+  test('440 that cannot be renewed: tells the app (back to the login screen)', () async {
+    var lost = 0;
+    final api = clientFor((req) async => http.Response('', 440))
+      ..onSessionExpired = (() async => false)
+      ..onSessionLost = () => lost++;
+    await expectLater(api.get('Stock/StoreList'), throwsA(isA<ApiException>()));
+    expect(lost, 1);
+  });
+
+  test('440 renewed by logging in again: the app stays where it is', () async {
+    var lost = 0;
+    final api = clientFor((req) async =>
+        req.headers['SESSION'] == 'new' ? json({'ok': true}) : http.Response('', 440))
+      ..session = 'old';
+    api
+      ..onSessionExpired = () async {
+        api.session = 'new';
+        return true;
+      }
+      ..onSessionLost = () => lost++;
+    await api.get('Stock/StoreList');
+    expect(lost, 0);
+  });
+
   test('no API key: refuses to call at all', () async {
     var calls = 0;
     final api = ApiClient(client: MockClient((req) async {

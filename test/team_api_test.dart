@@ -60,10 +60,56 @@ void main() {
     expect(logins, 1);
   });
 
+  test('440 on a call sent before the new login: goes again with the new session, no second login', () async {
+    var logins = 0;
+    var current = 'fresh-0'; // the server knows only the newest session of a login
+    final api = clientFor((req) async {
+      final ok = req.headers['SESSION'] == current;
+      // Stock/Slow answers late: it comes back after the other call has already logged in again.
+      if (req.url.path.endsWith('Slow')) await Future<void>.delayed(const Duration(milliseconds: 30));
+      return ok ? json({'ok': true}) : http.Response('', 440);
+    })
+      ..session = 'old';
+    api.onSessionExpired = () async {
+      logins++;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      current = 'fresh-$logins'; // a new login ends the one before
+      api.session = current;
+      return true;
+    };
+    final results = await Future.wait([api.get('Stock/StoreList'), api.get('Stock/Slow')]);
+    expect(results.every((r) => r['ok'] == true), isTrue);
+    expect(logins, 1);
+  });
+
   test('440 with no way to log in again: says the session expired', () async {
     final api = clientFor((req) async => http.Response('', 440));
     await expectLater(api.get('Stock/StoreList'),
         throwsA(isA<ApiException>().having((e) => e.sessionExpired, 'sessionExpired', true)));
+  });
+
+  test('440 that cannot be renewed: tells the app (back to the login screen)', () async {
+    var lost = 0;
+    final api = clientFor((req) async => http.Response('', 440))
+      ..onSessionExpired = (() async => false)
+      ..onSessionLost = () => lost++;
+    await expectLater(api.get('Stock/StoreList'), throwsA(isA<ApiException>()));
+    expect(lost, 1);
+  });
+
+  test('440 renewed by logging in again: the app stays where it is', () async {
+    var lost = 0;
+    final api = clientFor((req) async =>
+        req.headers['SESSION'] == 'new' ? json({'ok': true}) : http.Response('', 440))
+      ..session = 'old';
+    api
+      ..onSessionExpired = () async {
+        api.session = 'new';
+        return true;
+      }
+      ..onSessionLost = () => lost++;
+    await api.get('Stock/StoreList');
+    expect(lost, 0);
   });
 
   test('no API key: refuses to call at all', () async {

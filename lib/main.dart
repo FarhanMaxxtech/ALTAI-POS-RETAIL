@@ -36,6 +36,8 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
   Staff? _staff;
   Store? _location;
   bool _restoring = true; // checking the saved login when the app opens
+  final _nav = GlobalKey<NavigatorState>();
+  String? _loginNotice; // why the login screen came back
   StoreTags? _storeTags; // the location's tags, kept on the tablet
   String? _storeTagsFor;
 
@@ -58,7 +60,20 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
   @override
   void initState() {
     super.initState();
+    _api.onSessionLost = _sessionLost;
     _restore();
+  }
+
+  /// The session ended and the app can't log in again by itself: back to the login screen, from
+  /// wherever the cashier is (a basket that can't be checked is no use anyway).
+  Future<void> _sessionLost() async {
+    if (_staff == null || !mounted) return; // already logged out, or the login itself
+    _nav.currentState?.popUntil((route) => route.isFirst);
+    setState(() {
+      _staff = null;
+      _loginNotice = 'Your session ended. Please log in again.';
+    });
+    await _auth.logout();
   }
 
   Future<void> _restore() async {
@@ -84,6 +99,7 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
     return MaterialApp(
       title: 'Altai POS',
       debugShowCheckedModeBanner: false,
+      navigatorKey: _nav,
       // Altai design system, light and dark (follows the tablet's setting).
       theme: altaiTheme(Brightness.light),
       darkTheme: altaiTheme(Brightness.dark),
@@ -94,8 +110,12 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
               ? LoginScreen(
                   auth: _auth,
                   location: location,
+                  notice: _loginNotice,
                   onLocationSet: (s) => setState(() => _location = s),
-                  onLoggedIn: (s) => setState(() => _staff = s))
+                  onLoggedIn: (s) => setState(() {
+                        _staff = s;
+                        _loginNotice = null;
+                      }))
               : HomeScreen(
                   api: _checkout,
                   storeId: location.id,

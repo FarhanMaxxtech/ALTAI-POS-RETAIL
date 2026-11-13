@@ -14,6 +14,7 @@ class BasketItem {
     this.variation,
     this.sku,
     this.problem,
+    this.multiplier = 1,
   });
 
   final String epc;
@@ -22,6 +23,7 @@ class BasketItem {
   final String? productCode; // the same for every colour and size of one product
   final String? variation;
   final String? sku;
+  final int multiplier;
 
   /// Why it can't be sold, in words for the cashier.
   final String? problem;
@@ -57,6 +59,7 @@ BasketItem itemFromInspection(Map<String, dynamic> t, String storeId) {
     productCode: t['product_code'] as String?,
     variation: t['variation'] as String?,
     sku: t['sku'] as String?,
+    multiplier: (t['multiplier'] as int?) ?? 1,
   );
 
   if (t['found'] == false) return problem('Not registered to any product');
@@ -67,7 +70,7 @@ BasketItem itemFromInspection(Map<String, dynamic> t, String storeId) {
     return problem('Held by a pending transfer, count or adjustment');
   }
   final tagStore = t['store_id'] as String?;
-  if (tagStore == null) return problem('Could not confirm which store it is in');
+  if (tagStore == null) return problem('Not in any store: probably already sold');
   if (tagStore != storeId) {
     return problem('Belongs to ${t['store_name'] ?? 'another store'}');
   }
@@ -78,6 +81,7 @@ BasketItem itemFromInspection(Map<String, dynamic> t, String storeId) {
     productCode: t['product_code'] as String?,
     variation: t['variation'] as String?,
     sku: t['sku'] as String?,
+    multiplier: (t['multiplier'] as int?) ?? 1,
   );
 }
 
@@ -100,3 +104,15 @@ int? toCents(String? price) {
 
 /// 4990 → "49.90"
 String formatRm(int cents) => '${cents ~/ 100}.${(cents % 100).toString().padLeft(2, '0')}';
+
+/// Altai's error when a bound item (e.g. a stone) is checked out without the product it's bound to
+/// (e.g. its ring), in words for the cashier. Any other message comes back unchanged.
+String checkoutErrorForCashier(String message) {
+  final part = RegExp(r'Category \[([^\]]+)\] cannot be checked out on its own').firstMatch(message);
+  if (part == null) return message;
+  final main = RegExp(r'for category \[([^\]]+)\]').firstMatch(message);
+  final partName = part.group(1)!;
+  final mainName = main?.group(1) ?? 'product';
+  return 'A $partName item is bound to a $mainName and can\'t be sold on its own. '
+      'Scan the $mainName together with it, or remove the $partName item.';
+}

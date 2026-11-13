@@ -35,6 +35,7 @@ class AuthApi {
     _loginId = loginId;
     _password = password;
     await _use(res, fallbackName: loginId);
+    ApiClient.sessionLog('login: got and saved ${ApiClient.tail(res.session)}');
     return Staff(res.name.isEmpty ? loginId : res.name);
   }
 
@@ -47,17 +48,24 @@ class AuthApi {
   Future<bool> _loginAgain() async {
     final id = _loginId;
     final pw = _password;
-    if (id == null || pw == null) return false;
+    if (id == null || pw == null) {
+      ApiClient.sessionLog('can\'t log in again by itself: no password since the app started');
+      return false;
+    }
     try {
-      await _use(await _api.login({'loginId': id, 'password': pw}), fallbackName: id);
+      final res = await _api.login({'loginId': id, 'password': pw});
+      await _use(res, fallbackName: id);
+      ApiClient.sessionLog('logged in again by itself: got and saved ${ApiClient.tail(res.session)}');
       return true;
-    } on ApiException {
+    } on ApiException catch (e) {
+      ApiClient.sessionLog('logging in again failed: ${e.message}');
       return false;
     }
   }
 
   /// Forgets the login, in memory and on the tablet. The location stays.
   Future<void> logout() async {
+    ApiClient.sessionLog('logout: saved session cleared');
     _api.session = null;
     _api.merchantId = null;
     _loginId = null;
@@ -74,6 +82,7 @@ class AuthApi {
   /// Logs that account in only for this one call: nobody stays logged in.
   Future<List<Store>> storesFor(String loginId, String password) async {
     final res = await _api.login({'loginId': loginId, 'password': password});
+    ApiClient.sessionLog('setting the location: extra login ${ApiClient.tail(res.session)}');
     final session = _api.session;
     final merchantId = _api.merchantId;
     _api.session = res.session;
@@ -90,14 +99,17 @@ class AuthApi {
   /// Returns null when staff have to log in again.
   Future<SavedSession?> restore() async {
     final saved = await _session.load();
+    ApiClient.sessionLog('app opened: saved session ${ApiClient.tail(saved?.session)}');
     if (saved == null) return null;
 
     _api.session = saved.session;
     _api.merchantId = saved.merchantId;
     try {
       await stores(); // any call will do: it fails with 440 when the session has expired
+      ApiClient.sessionLog('app opened: saved session still valid');
       return saved;
     } on ApiException catch (e) {
+      ApiClient.sessionLog('app opened: StoreList answered ${e.status} (${e.message})');
       if (e.sessionExpired) {
         await logout();
         return null;

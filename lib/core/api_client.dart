@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'config.dart';
@@ -58,6 +59,10 @@ class ApiClient {
   /// Called once when the session expires. Returns true if it logged in again.
   Future<bool> Function()? onSessionExpired;
 
+  /// The session expired and couldn't be renewed (after the app restarted, the password isn't
+  /// known any more): the app goes back to the login screen instead of failing every call.
+  void Function()? onSessionLost;
+
   // Many calls can hit an expired session at the same moment (a scan burst). Only one of them logs
   // in again; the others wait for that same attempt. Two logins at once would cancel each other.
   Future<bool>? _reLogin;
@@ -71,10 +76,10 @@ class ApiClient {
         'MERCHANTID': ?merchantId,
       };
 
-  Future<Map<String, dynamic>> get(String path, [Map<String, String>? query]) => _call(
+  Future<Map<String, dynamic>> get(String path, [Map<String, String>? query]) => _call(path,
       () => _client.get(Uri.parse('$baseUrl/$path').replace(queryParameters: query), headers: _headers));
 
-  Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body) => _call(
+  Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body) => _call(path,
       () => _client.post(Uri.parse('$baseUrl/$path'), headers: _headers, body: jsonEncode(body)));
 
   /// Merchant/Login. Doesn't change [session]: the caller decides whether to use it.
@@ -82,6 +87,14 @@ class ApiClient {
     final res = await _send(() => _client.post(Uri.parse('$baseUrl/Merchant/Login'),
         headers: {'APIKEY': apiKey, 'Content-Type': 'application/json'}, body: jsonEncode(body)));
     final json = _decode(res);
+    // Which headers and cookies Altai sends back (names only, no values): is there a load balancer
+    // cookie (AWSALB, ARRAffinity, …) that ties the session to one server?
+    final cookies = (res.headers['set-cookie'] ?? '')
+        .split(RegExp(r',(?=[^;,]*=)'))
+        .map((c) => c.split('=').first.trim())
+        .where((n) => n.isNotEmpty)
+        .toList();
+    sessionLog('login answer: headers ${res.headers.keys.toList()}, cookies $cookies');
     final session = res.headers['session'];
     if (session == null || session.isEmpty) {
       throw ApiException('Login answered without a session.', status: res.statusCode);
@@ -93,15 +106,33 @@ class ApiClient {
     );
   }
 
-  Future<Map<String, dynamic>> _call(Future<http.Response> Function() call) async {
+  Future<Map<String, dynamic>> _call(String path, Future<http.Response> Function() call) async {
+    var sentWith = session;
     var res = await _send(call);
-    if (res.statusCode == 440 && await _tryReLogin()) {
+    if (res.statusCode == 440) sessionLog('440 on $path, sent with ${tail(sentWith)}, now ${tail(session)}');
+    // A call sent with the old session can come back after another call already logged in again.
+    // Then it only needs to go again with the new session: a second login would end the new one
+    // (one session per login), and the calls using it would fail with "Session expired".
+    for (var tries = 0; tries < 2 && res.statusCode == 440; tries++) {
+      if (session == sentWith && !await _tryReLogin()) break;
+      sentWith = session;
       res = await _send(call); // the closure reads the new session from _headers
+      sessionLog('$path again with ${tail(sentWith)}: ${res.statusCode}');
     }
     if (res.statusCode == 440) {
+      sessionLog('$path: session lost, back to the login screen');
+      onSessionLost?.call();
       throw ApiException('Session expired. Please log in again.', status: 440);
     }
     return _decode(res);
+  }
+
+  /// The last 4 characters of a session: enough to tell sessions apart in the log, not to use one.
+  static String tail(String? s) => s == null ? 'none' : '…${s.length > 4 ? s.substring(s.length - 4) : s}';
+
+  /// What happens to the login, in debug builds only. See it with `adb logcat | Select-String SESSION`.
+  static void sessionLog(String what) {
+    if (kDebugMode) debugPrint('[SESSION] $what');
   }
 
   Future<bool> _tryReLogin() {

@@ -4,15 +4,17 @@ import 'package:flutter/services.dart';
 import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
+import '../../../shared/reader_session.dart';
+import '../../../shared/reader_widgets.dart';
 import '../../../shared/rfid_reader.dart';
-import '../../checkout/presentation/scan_page.dart';
 import '../../checkout/data/checkout_api.dart';
 import '../data/orders_api.dart';
 import '../domain/order.dart';
 import '../domain/order_scan_controller.dart';
 
 /// Scan the items of one paid StoreHub order. Wrong items and extra pieces are refused on the spot.
-/// The items are read with the Scan page (the USB RFID reader), like at checkout.
+/// The items are read straight from the USB RFID reader, like at checkout: it reads the whole time
+/// the order is open, with no Scan page and no Scan button.
 class OrderScanScreen extends StatefulWidget {
   const OrderScanScreen({
     super.key,
@@ -30,7 +32,7 @@ class OrderScanScreen extends StatefulWidget {
   final String storeId;
   final String staffName;
 
-  /// The USB RFID reader the Scan page drives.
+  /// The USB RFID reader.
   final TagReader tagReader;
 
   @override
@@ -46,6 +48,13 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
     staffName: widget.staffName,
   );
   final _beeper = Beeper();
+  late final ReaderSession _reader = ReaderSession(
+    reader: widget.tagReader,
+    onTags: (epcs) {
+      if (epcs.isNotEmpty) _scan.addText(epcs.join(' '));
+    },
+  );
+  OrderScanPhase _lastPhase = OrderScanPhase.scanning;
   int _lastOk = 0;
   int _lastRejected = 0;
 
@@ -55,10 +64,18 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
   void initState() {
     super.initState();
     _scan.addListener(_onChanged);
+    _reader.addListener(_onReaderChanged);
+    _reader.start();
+  }
+
+  void _onReaderChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _reader.removeListener(_onReaderChanged);
+    _reader.dispose();
     _scan.removeListener(_onChanged);
     _scan.dispose();
     _beeper.dispose();
@@ -75,23 +92,17 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
     }
     _lastOk = _scan.scannedQty;
     _lastRejected = _scan.rejected.length;
-  }
 
-  /// The Scan page: the order's items on the reader, Scan, and they all come back here.
-  Future<void> _scanItems() async {
-    final tags = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(builder: (_) => ScanPage(
-        reader: widget.tagReader,
-        inspector: widget.inspector,
-        target: 'order',
-        allowedSkus: {
-          for (final l in widget.order.lines)
-            if (!l.exempt) l.sku,
-        },
-      )),
-    );
-    if (!mounted) return;
-    if (tags != null && tags.isNotEmpty) _scan.addText(tags.join(' '));
+    // Completing or done: no more reading. Back to scanning (completing failed): read again.
+    final phase = _scan.phase;
+    if (phase != _lastPhase) {
+      if (phase == OrderScanPhase.scanning) {
+        _reader.start();
+      } else {
+        _reader.stop();
+      }
+    }
+    _lastPhase = phase;
   }
 
   /// Leaving with tags scanned loses them (the order stays pending), so ask first.
@@ -159,6 +170,7 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _epcBox(context),
+                if (_reader.error != null) ...[const SizedBox(height: D.space2), ReaderProblem(session: _reader)],
                 if (_scan.message case final m?) ...[const SizedBox(height: D.space2), AltaiNotice(m, warning: true)],
                 const SizedBox(height: D.space3),
                 Expanded(
@@ -209,7 +221,7 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
           const SizedBox(width: D.space3),
           Expanded(
             child: Text(
-              'Put the items of this order on the reader, then tap Scan.',
+              'Put the items of this order near the reader. They come in on their own.',
               style: AltaiType.body.copyWith(color: c.ink),
             ),
           ),
@@ -220,13 +232,7 @@ class _OrderScanScreenState extends State<OrderScanScreen> {
             Text('Checking ${_scan.checkingCount}', style: AltaiType.caption.copyWith(color: c.inkMuted)),
           ],
           const SizedBox(width: D.space3),
-          AltaiButton(
-            'Scan',
-            onPressed: _scanItems,
-            variant: AltaiButtonVariant.primary,
-            icon: Icons.sensors_rounded,
-            large: true,
-          ),
+          ReaderDot(on: _reader.reading),
         ],
       ),
     );

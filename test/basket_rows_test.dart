@@ -164,7 +164,8 @@ void main() {
       // The last look and the done screen fit too.
       await tester.tap(find.textContaining('Confirm'));
       await tester.pumpAndSettle();
-      expect(find.text('Black / L · SKU CT-BLK-L'), findsOneWidget);
+      expect(find.text('SKU CT-BLK-L'), findsOneWidget);
+      expect(find.text('Black / L'), findsWidgets);
       await tester.tap(find.text('Submit'));
       await tester.pumpAndSettle();
       expect(find.text('Good to go'), findsOneWidget);

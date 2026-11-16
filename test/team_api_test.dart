@@ -60,6 +60,28 @@ void main() {
     expect(logins, 1);
   });
 
+  test('440 on a call sent before the new login: goes again with the new session, no second login', () async {
+    var logins = 0;
+    var current = 'fresh-0'; // the server knows only the newest session of a login
+    final api = clientFor((req) async {
+      final ok = req.headers['SESSION'] == current;
+      // Stock/Slow answers late: it comes back after the other call has already logged in again.
+      if (req.url.path.endsWith('Slow')) await Future<void>.delayed(const Duration(milliseconds: 30));
+      return ok ? json({'ok': true}) : http.Response('', 440);
+    })
+      ..session = 'old';
+    api.onSessionExpired = () async {
+      logins++;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      current = 'fresh-$logins'; // a new login ends the one before
+      api.session = current;
+      return true;
+    };
+    final results = await Future.wait([api.get('Stock/StoreList'), api.get('Stock/Slow')]);
+    expect(results.every((r) => r['ok'] == true), isTrue);
+    expect(logins, 1);
+  });
+
   test('440 with no way to log in again: says the session expired', () async {
     final api = clientFor((req) async => http.Response('', 440));
     await expectLater(api.get('Stock/StoreList'),

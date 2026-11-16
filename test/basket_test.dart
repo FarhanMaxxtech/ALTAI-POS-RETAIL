@@ -114,6 +114,18 @@ void main() {
       itemFromInspection({'epc': tagA, 'found': true, 'store_id': '13', 'store_name': 'Pavilion'}, '12').problem,
       'Belongs to Pavilion',
     );
+    expect(
+      itemFromInspection({'epc': tagA, 'found': true}, '12').problem,
+      contains('already sold'),
+    );
+    expect(
+      itemFromInspection({'epc': tagA, 'found': true, 'store_id': '12', 'multiplier': 10}, '12').multiplier,
+      10,
+    );
+    expect(
+      itemFromInspection({'epc': tagA, 'found': true, 'store_id': '12'}, '12').multiplier,
+      1,
+    );
     expect(itemFromInspection({'epc': tagA, 'found': true, 'store_id': '12'}, '12').state, ItemState.ok);
   });
 
@@ -124,6 +136,35 @@ void main() {
     expect(basket.items.length, 2);
     expect(api.inspectCalls, 1);
     expect(basket.canComplete, isTrue);
+  });
+
+  test('a removed item stays out while it is on the pad, and comes back once taken away and put back', () async {
+    basket.readRound([tagA, tagB]);
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    basket.remove(tagA);
+    expect(basket.items.map((i) => i.epc), [tagB]);
+
+    for (var i = 0; i < 5; i++) {
+      basket.readRound([tagA, tagB]); // still on the pad: stays out
+    }
+    expect(basket.items.map((i) => i.epc), [tagB]);
+
+    for (var i = 0; i < BasketController.comeBackAfter; i++) {
+      basket.readRound([tagB]); // taken off the pad
+    }
+    basket.readRound([tagA, tagB]); // put back: the customer wants it after all
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(basket.items.map((i) => i.epc), containsAll([tagA, tagB]));
+  });
+
+  test('a removed item missing for a round or two (the pad\'s edge) stays out', () {
+    basket.readRound([tagA]);
+    basket.remove(tagA);
+    basket.readRound([]);
+    basket.readRound([tagA]);
+    basket.readRound([]);
+    basket.readRound([tagA]);
+    expect(basket.items, isEmpty);
   });
 
   test('a tag with no product is left out, with a note; the sale goes on', () async {
@@ -175,6 +216,13 @@ void main() {
     expect(basket.phase, BasketPhase.scanning);
     expect(basket.message, 'Tag not in store');
     expect(basket.canComplete, isTrue);
+
+    // The reader goes on reading the same items: the message stays until something new comes in.
+    basket.readRound([tagA]);
+    basket.readRound([tagA]);
+    expect(basket.message, 'Tag not in store');
+    basket.readRound([tagA, tagB]);
+    expect(basket.message, isNull);
   });
 
   test('next customer gets a new ref and an empty basket', () async {
@@ -219,5 +267,17 @@ void main() {
     expect(n.receipt, isNull);
     expect(n.noReceiptReason, 'Receipt lost');
     expect(n.cashier, isNull);
+  });
+
+  test('a bound-items error from Altai is put in words for the cashier', () {
+    const altai = 'Category [batu] cannot be checked out on its own: 1 item(s) scanned without the product '
+        'they are bound to. Bound items mismatch for category [ring]: required 1 (PR000053 Ruby Gem x1), scanned 0.';
+    expect(
+      checkoutErrorForCashier(altai),
+      "A batu item is bound to a ring and can't be sold on its own. "
+          'Scan the ring together with it, or remove the batu item.',
+    );
+    // any other error is shown as it is
+    expect(checkoutErrorForCashier('Tag not found'), 'Tag not found');
   });
 }

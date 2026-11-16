@@ -40,23 +40,22 @@ void main() {
     expect(find.byTooltip('Log out'), findsOneWidget);
   });
 
-  testWidgets('Scan for Checkout: scan, then the checkout opens with the items; back asks first', (tester) async {
+  testWidgets('Scan for Checkout: one tap, the checkout opens and reads at once; back asks first', (tester) async {
     await open(tester);
-    reader.next.addAll(['E2801160000000A1']);
+    reader.next
+      ..clear()
+      ..addAll(['E2801160000000A1']);
     await tester.tap(find.text('Scan for Checkout'));
-    await tester.pumpAndSettle();
-    expect(find.text('Scan for checkout'), findsOneWidget); // the scan page
-    await tester.tap(find.widgetWithText(AltaiButton, 'Scan'));
-    for (var i = 0; i < 3; i++) {
-      await tester.pump(const Duration(milliseconds: 800));
-    }
-    await tester.tap(find.widgetWithText(AltaiButton, 'Stop scanning'));
-    await tester.pump(const Duration(milliseconds: 800));
-    await tester.tap(find.text('Add 1 to basket'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
-    await tester.pump(const Duration(milliseconds: 600));
-    expect(find.text('Checkout'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 600)); // the checkout slides in: no settling, it's reading
+    expect(find.text('Checkout'), findsOneWidget); // straight to the checkout, no Scan page
+    expect(find.text('Reader on'), findsOneWidget); // reading already: no Scan or Stop button at all
+    expect(find.widgetWithText(AltaiButton, 'Scan'), findsNothing);
+    expect(find.widgetWithText(AltaiButton, 'Stop scanning'), findsNothing);
+    for (var i = 0; i < 3; i++) {
+      await tester.pump(const Duration(milliseconds: 800)); // the item lands in the basket as it's read
+    }
+    await tester.pump(const Duration(seconds: 1));
     expect(find.text('Classic Tee'), findsOneWidget);
     expect(find.text('Last read'), findsNothing);
     expect(find.textContaining('E280 1160'), findsNothing); // no EPCs on screen, only products
@@ -73,7 +72,11 @@ void main() {
   testWidgets('Return / Refund opens the return screen', (tester) async {
     await open(tester);
     await tester.tap(find.text('Return / Refund'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600)); // it reads at once
     expect(find.text('Return & refund'), findsOneWidget);
+    expect(find.text('Reader on'), findsOneWidget); // reading at once, nothing to tap
+    expect(find.widgetWithText(AltaiButton, 'Scan'), findsNothing);
+    expect(find.widgetWithText(AltaiButton, 'Stop scanning'), findsNothing);
   });
 }

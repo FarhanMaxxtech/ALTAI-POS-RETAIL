@@ -179,6 +179,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Order $newer'), findsOneWidget);
       expect(find.text('0 / 2'), findsOneWidget);
+      expect(find.text('Reader on'), findsOneWidget); // reading at once: no Scan page, no Scan button
+      expect(find.text('Scan'), findsNothing);
 
       Future<void> scanTags(String text) async {
         await scanWithReader(tester, reader, text.split(' '));

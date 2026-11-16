@@ -28,11 +28,12 @@ void main() {
 
   Finder field(String label) => find.widgetWithText(TextField, label);
 
-  testWidgets('the receipt box is on top, the Scan button under it, no EPC box', (tester) async {
+  testWidgets('the receipt box is on top, the reader line under it, no Scan button, no EPC box', (tester) async {
     await open(tester);
     final receipt = tester.getRect(field('StoreHub receipt no., order no. or ID'));
-    final scan = tester.getRect(find.widgetWithText(AltaiButton, 'Scan'));
-    expect(receipt.top, lessThan(scan.top));
+    final reader = tester.getRect(find.textContaining('put them near the reader'));
+    expect(receipt.top, lessThan(reader.top));
+    expect(find.widgetWithText(AltaiButton, 'Scan'), findsNothing);
     expect(find.byType(TextField), findsOneWidget); // only the receipt box
   });
 }

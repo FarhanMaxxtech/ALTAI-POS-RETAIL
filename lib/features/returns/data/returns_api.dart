@@ -13,26 +13,13 @@ class ReturnsApi {
 
   /// Stock/Adjustment (ADI). Saves the return; stock doesn't change until [approve].
   /// Returns the team's transaction number.
-  ///
-  /// [qtys] sets how many pieces come back per SKU (the same "qtys" the handheld app sends). Without
-  /// it a bundle tag puts back its whole "multiply by" (5 for a 5-piece tag), but a checkout takes
-  /// out only 1 per tag, so stock would go up by more than was sold.
-  Future<String> save({
-    required String storeId,
-    required List<String> epcs,
-    required String remark,
-    Map<String, int> qtys = const {},
-  }) async {
+  Future<String> save({required String storeId, required List<String> epcs, required String remark}) async {
     final res = await _api.post('Stock/Adjustment', {
       'storeId': storeId,
       'trxType': 'ADI',
       'trxDate': _day(DateTime.now()),
       'remark': remark,
       'epcs': epcs,
-      if (qtys.isNotEmpty)
-        'qtys': [
-          for (final q in qtys.entries) {'sku': q.key, 'qty': q.value},
-        ],
     });
     final trxId = res['trxId'] ?? res['id'];
     // Saved, but we can't tell which one: treated like no answer, so findByRef settles it.

@@ -94,14 +94,8 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> _call(Future<http.Response> Function() call) async {
-    var sentWith = session;
     var res = await _send(call);
-    // A call sent with the old session can come back after another call already logged in again.
-    // Then it only needs to go again with the new session: a second login would end the new one
-    // (one session per login), and the calls using it would fail with "Session expired".
-    for (var tries = 0; tries < 2 && res.statusCode == 440; tries++) {
-      if (session == sentWith && !await _tryReLogin()) break;
-      sentWith = session;
+    if (res.statusCode == 440 && await _tryReLogin()) {
       res = await _send(call); // the closure reads the new session from _headers
     }
     if (res.statusCode == 440) {

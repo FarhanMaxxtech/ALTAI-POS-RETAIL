@@ -122,6 +122,56 @@ void main() {
     expect(team.bodies['Stock/AdjustmentApproveNoScan']!['id'], '77');
   });
 
+  test('a bundle tag (5 pieces) comes back as 1 piece per tag, like the checkout took out', () async {
+    final team = FakeTeam()
+      ..override = (p) => p == 'Stock/TagLookup'
+          ? json({'sku': 'RG-AU-05-PD', 'productName': 'Ring', 'multiplier': 5})
+          : null;
+    final r = await readyReturn(team);
+    r.addText('E2801160000000B2');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await r.submit();
+
+    expect(r.phase, ReturnPhase.done);
+    expect(team.bodies['Stock/Adjustment']!['qtys'], [
+      {'sku': 'RG-AU-05-PD', 'qty': 2},
+    ]);
+  });
+
+  test('a bundle tag: − / + sets the pieces coming back (1 to the whole bundle), sent as qtys', () async {
+    final team = FakeTeam()
+      ..override = (p) => p == 'Stock/TagLookup'
+          ? json({'sku': 'RG-AU-05-PD', 'productName': 'Ring', 'multiplier': 3})
+          : null;
+    final r = await readyReturn(team);
+    final tag = r.items.single;
+    expect(r.pcsOf(tag), 1);
+    expect(r.canRemovePc(tag), isFalse);
+
+    r.changePcs(tag.epc, 1);
+    expect(r.pcsOf(tag), 2);
+    expect(r.pieceCount, 2);
+    for (var i = 0; i < 5; i++) {
+      r.changePcs(tag.epc, 1);
+    }
+    expect(r.pcsOf(tag), 3); // never more than the bundle holds
+    expect(r.canAddPc(tag), isFalse);
+    r.changePcs(tag.epc, -1);
+
+    await r.submit();
+    expect(r.phase, ReturnPhase.done);
+    expect(team.bodies['Stock/Adjustment']!['qtys'], [
+      {'sku': 'RG-AU-05-PD', 'qty': 2},
+    ]);
+  });
+
+  test('normal items: no qtys sent, 1 per tag as before', () async {
+    final team = FakeTeam();
+    final r = await readyReturn(team);
+    await r.submit();
+    expect(team.bodies['Stock/Adjustment']!.containsKey('qtys'), isFalse);
+  });
+
   test('approval refused: stays saved, Try again approves the same one', () async {
     final team = FakeTeam();
     var refuse = true;

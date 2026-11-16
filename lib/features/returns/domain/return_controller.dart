@@ -28,7 +28,8 @@ BasketItem returnItemFromInspection(Map<String, dynamic> t) {
       problem: problem,
       productName: t['product_name'] as String?,
       variation: t['variation'] as String?,
-      sku: t['sku'] as String?);
+      sku: t['sku'] as String?,
+      multiplier: (t['multiplier'] as int?) ?? 1);
 
   if (t['found'] == false) return item(ItemState.problem, 'Not registered to any product');
   if (t['found'] != true) return item(ItemState.problem, 'Could not check this tag');
@@ -84,6 +85,31 @@ class ReturnController extends ChangeNotifier {
 
   List<BasketItem> get items => _items.values.toList(growable: false);
   int get okCount => _items.values.where((i) => i.state == ItemState.ok).length;
+
+  /// Pieces coming back: a bundle tag counts as the pieces the cashier set for it.
+  int get pieceCount =>
+      _items.values.where((i) => i.state == ItemState.ok).fold(0, (sum, i) => sum + pcsOf(i));
+
+  /// Pieces coming back on each bundle tag ("multiply by" above 1). Starts at 1; the cashier sets it
+  /// with − / + to what the customer bought, up to the whole bundle.
+  final Map<String, int> _pcs = {};
+
+  /// Pieces of [item] coming back: 1 for a normal item, the cashier's number for a bundle tag.
+  int pcsOf(BasketItem item) =>
+      item.multiplier > 1 ? (_pcs[item.epc] ?? 1).clamp(1, item.multiplier) : 1;
+
+  bool canAddPc(BasketItem item) =>
+      phase == ReturnPhase.scanning && item.state == ItemState.ok && pcsOf(item) < item.multiplier;
+  bool canRemovePc(BasketItem item) =>
+      phase == ReturnPhase.scanning && item.state == ItemState.ok && pcsOf(item) > 1;
+
+  /// − / + on a bundle tag: one piece less or more.
+  void changePcs(String epc, int by) {
+    final item = _items[epc];
+    if (phase != ReturnPhase.scanning || item == null || item.multiplier <= 1) return;
+    _pcs[epc] = (pcsOf(item) + by).clamp(1, item.multiplier);
+    notifyListeners();
+  }
   bool get isChecking => _items.values.any((i) => i.state == ItemState.checking);
   bool get hasProblems => _items.values.any((i) => i.state == ItemState.problem);
 
@@ -102,10 +128,10 @@ class ReturnController extends ChangeNotifier {
   String? priceOf(BasketItem item) => item.sku == null ? null : _info[item.sku]?.price;
   String? imageOf(BasketItem item) => item.sku == null ? null : _info[item.sku]?.image;
 
-  /// What to refund on StoreHub: the team's price of each item coming back, in cents.
+  /// What to refund on StoreHub: the team's price of each piece coming back, in cents.
   int get refundCents => _items.values
       .where((i) => i.state == ItemState.ok)
-      .map((i) => toCents(priceOf(i)) ?? 0)
+      .map((i) => (toCents(priceOf(i)) ?? 0) * pcsOf(i))
       .fold(0, (sum, c) => sum + c);
 
   /// Items coming back whose price is looked up but missing.
@@ -169,6 +195,7 @@ class ReturnController extends ChangeNotifier {
   void remove(String epc) {
     if (phase != ReturnPhase.scanning) return;
     if (_items.remove(epc) != null) _removed[epc] = 0; // still on the pad: don't read it back in yet
+    _pcs.remove(epc);
     message = null;
     notifyListeners();
   }
@@ -192,6 +219,7 @@ class ReturnController extends ChangeNotifier {
     _items.clear();
     _leftOut.clear();
     _removed.clear();
+    _pcs.clear();
     _info.clear();
     _clientRef = newClientRef();
     phase = ReturnPhase.scanning;
@@ -267,6 +295,17 @@ class ReturnController extends ChangeNotifier {
       receiptNo: receiptNo.trim(), reason: reason ?? '', staffName: staffName, clientRef: _clientRef);
 
   /// Saves the adjustment, then approves it. Try again after a problem picks up where it stopped.
+  /// Bundle SKUs (a tag that counts as several pieces) and how many pieces come back: 1 per tag
+  /// unless the cashier changed it with − / +. Without it Altai would put back the whole bundle.
+  /// Normal SKUs aren't listed; they already go back 1 per tag.
+  Map<String, int> get bundleQtys {
+    final qtys = <String, int>{};
+    for (final i in _items.values) {
+      if (i.multiplier > 1 && i.sku != null) qtys[i.sku!] = (qtys[i.sku!] ?? 0) + pcsOf(i);
+    }
+    return qtys;
+  }
+
   Future<void> submit() async {
     if (phase == ReturnPhase.scanning && !canSubmit) return;
     if (phase != ReturnPhase.scanning && phase != ReturnPhase.retry && phase != ReturnPhase.notApproved) return;
@@ -280,7 +319,8 @@ class ReturnController extends ChangeNotifier {
       try {
         // After no answer the first save may have gone through: look for it before saving again.
         final found = from == ReturnPhase.retry ? await api.findByRef(storeId, _clientRef) : null;
-        trxId = found ?? await api.save(storeId: storeId, epcs: _items.keys.toList(), remark: _remark);
+        trxId = found ??
+            await api.save(storeId: storeId, epcs: _items.keys.toList(), remark: _remark, qtys: bundleQtys);
       } on ApiException catch (e) {
         message = _markStillInStock(e.message) ?? e.message;
         // Refused: nothing saved, staff can fix it and send again. No answer: may be saved, check first.

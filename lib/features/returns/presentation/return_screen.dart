@@ -5,9 +5,8 @@ import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
 import '../../../shared/keyboard.dart';
-import '../../../shared/reader_session.dart';
-import '../../../shared/reader_widgets.dart';
 import '../../../shared/rfid_reader.dart';
+import '../../checkout/presentation/scan_page.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../checkout/data/checkout_api.dart';
 import '../../checkout/domain/basket.dart';
@@ -20,8 +19,7 @@ import '../domain/return_controller.dart';
 /// With [exchange] it's step 1 of an exchange: once the items are back in stock the screen closes and
 /// hands an [ExchangeReturn] to the checkout, where the new items are scanned.
 ///
-/// The items coming back are read straight from the USB RFID reader into the list, like at checkout:
-/// it reads the whole time the screen is open (paused only while the confirm box is up).
+/// The items coming back are read with the Scan page (the USB RFID reader), like at checkout.
 class ReturnScreen extends StatefulWidget {
   const ReturnScreen({
     super.key,
@@ -45,7 +43,7 @@ class ReturnScreen extends StatefulWidget {
   /// Step 1 of an exchange: closes with an [ExchangeReturn] once the items are back in stock.
   final bool exchange;
 
-  /// The USB RFID reader this screen drives.
+  /// The USB RFID reader the Scan page drives.
   final TagReader tagReader;
 
   @override
@@ -61,12 +59,8 @@ class _ReturnScreenState extends State<ReturnScreen> {
       catalog: widget.catalog);
   final _receipt = TextEditingController();
   final _beeper = Beeper();
-  late final ReaderSession _reader =
-      ReaderSession(reader: widget.tagReader, onTags: _return.readRound);
   int _lastCount = 0;
   bool _handedBack = false; // exchange: the result is passed back once
-  bool _pausedNow = false; // the confirm box is open: the reader waits
-  ReturnPhase _lastPhase = ReturnPhase.scanning;
 
   bool get _showPrices => widget.catalog != null;
 
@@ -74,18 +68,10 @@ class _ReturnScreenState extends State<ReturnScreen> {
   void initState() {
     super.initState();
     _return.addListener(_onChanged);
-    _reader.addListener(_onReaderChanged);
-    _reader.start();
-  }
-
-  void _onReaderChanged() {
-    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
-    _reader.removeListener(_onReaderChanged);
-    _reader.dispose();
     _return.removeListener(_onChanged);
     _return.dispose();
     _receipt.dispose();
@@ -101,16 +87,11 @@ class _ReturnScreenState extends State<ReturnScreen> {
     }
     _lastCount = count;
 
-    // Back to scanning (a new return, or the submit didn't go through): read again.
-    final phase = _return.phase;
-    if (phase != _lastPhase && phase == ReturnPhase.scanning && !_pausedNow) _reader.start();
-    _lastPhase = phase;
-
     if (widget.exchange && _return.phase == ReturnPhase.done && !_handedBack) {
       _handedBack = true;
       final result = ExchangeReturn(
         receiptNo: _return.receiptNo.trim(),
-        pieces: _return.pieceCount,
+        pieces: _return.okCount,
         refundCents: _showPrices ? _return.refundCents : 0,
         trxId: _return.trxId ?? '',
       );
@@ -120,11 +101,18 @@ class _ReturnScreenState extends State<ReturnScreen> {
     }
   }
 
+  /// The Scan page: the returned items on the reader, Scan, and they all come back here.
+  Future<void> _scanItems() async {
+    final tags = await Navigator.of(context).push<List<String>>(
+        MaterialPageRoute(builder: (_) => ScanPage(reader: widget.tagReader, inspector: widget.inspector, target: 'return')));
+    if (!mounted) return;
+    if (tags != null && tags.isNotEmpty) _return.addText(tags.join(' '));
+  }
+
   void _newReturn() {
     _return.reset();
     _receipt.clear();
     _lastCount = 0;
-    _reader.start();
   }
 
   /// A return that may be half done stays on screen until it's finished.
@@ -140,9 +128,6 @@ class _ReturnScreenState extends State<ReturnScreen> {
 
   /// Last look: this changes live stock and can't be undone from the tablet.
   Future<void> _confirm() async {
-    // What's on screen is what comes back: no new tags while the cashier checks it.
-    _pausedNow = true;
-    _reader.stop();
     final c = context.altai;
     final ok = await showDialog<bool>(
       context: context,
@@ -151,9 +136,9 @@ class _ReturnScreenState extends State<ReturnScreen> {
             style: AltaiType.title.copyWith(color: c.ink)),
         content: Text(
           widget.exchange
-              ? '${plural(_return.pieceCount, 'pc')} go back into stock at ${widget.storeName}. '
+              ? '${plural(_return.okCount, 'pc')} go back into stock at ${widget.storeName}. '
                   'Next, scan the new items the customer takes.'
-              : '${plural(_return.pieceCount, 'pc')} go back into stock at ${widget.storeName}.'
+              : '${plural(_return.okCount, 'pc')} go back into stock at ${widget.storeName}.'
                   '${_showPrices ? ' Refund RM ${formatRm(_return.refundCents)} on StoreHub.' : ''}',
           style: AltaiType.body.copyWith(color: c.inkMuted),
         ),
@@ -166,12 +151,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
         ],
       ),
     );
-    _pausedNow = false;
-    if (ok == true) {
-      _return.submit();
-    } else if (mounted && _return.phase == ReturnPhase.scanning) {
-      _reader.start(); // Back: keep reading
-    }
+    if (ok == true) _return.submit();
   }
 
   @override
@@ -232,21 +212,21 @@ class _ReturnScreenState extends State<ReturnScreen> {
                 onChanged: _return.setReceipt,
               ),
               const SizedBox(height: D.space4),
-              // 2. The items coming back: read straight into the list below.
+              // 2. The items coming back: read with the Scan page.
               Row(children: [
                 Icon(Icons.sell_outlined, color: c.brandInk),
                 const SizedBox(width: D.space3),
                 Expanded(
-                  child: Text('Items coming back: put them near the reader. They come in on their own.',
+                  child: Text('Items coming back: put them on the reader, then tap Scan.',
                       style: AltaiType.body.copyWith(color: c.ink)),
                 ),
                 const SizedBox(width: D.space3),
-                ReaderDot(on: _reader.reading),
+                AltaiButton('Scan',
+                    onPressed: _scanItems,
+                    variant: AltaiButtonVariant.primary,
+                    icon: Icons.sensors_rounded,
+                    large: true),
               ]),
-              if (_reader.error != null) ...[
-                const SizedBox(height: D.space3),
-                ReaderProblem(session: _reader),
-              ],
               if (_return.message != null) ...[
                 const SizedBox(height: D.space3),
                 AltaiNotice(_return.message!),
@@ -255,7 +235,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
               if (items.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: D.space6),
-                  child: Text('No items yet. Put the returned items near the reader.',
+                  child: Text('No items yet. Put the returned items on the reader and tap Scan.',
                       style: AltaiType.body.copyWith(color: c.inkMuted), textAlign: TextAlign.center),
                 ),
               for (final i in items)
@@ -264,11 +244,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
                   child: _ItemRow(
                     item: i,
                     image: _return.imageOf(i),
-                    showPrice: _showPrices,
-                    unit: toCents(_return.priceOf(i)),
-                    pcs: _return.pcsOf(i),
-                    onLess: _return.canRemovePc(i) ? () => _return.changePcs(i.epc, -1) : null,
-                    onMore: _return.canAddPc(i) ? () => _return.changePcs(i.epc, 1) : null,
+                    price: _showPrices ? _return.priceOf(i) : null,
                     onRemove: () => _return.remove(i.epc),
                   ),
                 ),
@@ -294,7 +270,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
         child: SafeArea(
           top: false,
           child: Row(children: [
-            Text('${_return.pieceCount}', style: AltaiType.qty.copyWith(color: c.brandInk)),
+            Text('${_return.okCount}', style: AltaiType.qty.copyWith(color: c.brandInk)),
             const SizedBox(width: D.space1),
             Text('pcs', style: AltaiType.label.copyWith(color: c.inkMuted)),
             if (_showPrices) ...[
@@ -343,7 +319,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
             const SizedBox(height: D.space4),
             Text('Back in stock', style: AltaiType.title.copyWith(fontSize: 32, color: c.ink)),
             Text(
-              '${plural(_return.pieceCount, 'pc')} · Receipt ${_return.receiptNo.trim()} · Adjustment ${_return.trxId}',
+              '${plural(_return.okCount, 'pc')} · Receipt ${_return.receiptNo.trim()} · Adjustment ${_return.trxId}',
               style: AltaiType.body.copyWith(color: c.inkMuted),
               textAlign: TextAlign.center,
             ),
@@ -383,40 +359,19 @@ class _ReturnScreenState extends State<ReturnScreen> {
   }
 }
 
-// The columns on the right of each row, so prices and pieces line up straight down.
-const _priceCol = 104.0;
-const _gapCol = 16.0;
-const _qtyCol = 108.0;
-
 class _ItemRow extends StatelessWidget {
-  const _ItemRow({
-    required this.item,
-    required this.image,
-    required this.showPrice,
-    required this.unit,
-    required this.pcs,
-    required this.onRemove,
-    this.onLess,
-    this.onMore,
-  });
+  const _ItemRow({required this.item, required this.image, required this.price, required this.onRemove});
 
   final BasketItem item;
   final String? image;
-  final bool showPrice;
-  final int? unit; // price of one piece in cents, null = no price
-  final int pcs; // pieces coming back on this tag
+  final String? price;
   final VoidCallback onRemove;
-
-  /// A bundle tag's − and +. Null = not allowed now (at 1, at the whole bundle, or not checked yet).
-  final VoidCallback? onLess;
-  final VoidCallback? onMore;
 
   @override
   Widget build(BuildContext context) {
     final c = context.altai;
     final problem = item.state == ItemState.problem;
     final checking = item.state == ItemState.checking;
-    final bundle = item.multiplier > 1;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: D.space4, vertical: D.space3),
       decoration: BoxDecoration(
@@ -436,87 +391,12 @@ class _ItemRow extends StatelessWidget {
             if (problem)
               Text(item.problem ?? '', style: AltaiType.caption.copyWith(color: c.danger))
             else if (item.variation ?? item.sku case final sub?)
-              Text(
-                [sub, if (bundle) 'Bundle ×${item.multiplier}'].join(' · '),
-                style: AltaiType.caption.copyWith(color: c.inkMuted),
-              ),
+              Text(sub, style: AltaiType.caption.copyWith(color: c.inkMuted)),
           ]),
         ),
-        if (showPrice && !problem && !checking) ...[
-          SizedBox(
-            width: _priceCol,
-            // Always one line: "RM" and the amount together, shrunk a little if it's long.
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerRight,
-              child: Text(
-                unit == null ? 'No price' : 'RM ${formatRm(unit! * pcs)}',
-                maxLines: 1,
-                softWrap: false,
-                style: unit == null
-                    ? AltaiType.caption.copyWith(color: c.warning)
-                    : AltaiType.bodyStrong.copyWith(color: c.ink),
-              ),
-            ),
-          ),
-          const SizedBox(width: _gapCol),
-        ],
-        if (!problem && !checking)
-          SizedBox(
-            width: _qtyCol,
-            child: Center(
-              child: bundle
-                  // A bundle tag: − pcs + (1 unless the customer bought more of it).
-                  ? FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: _PcsPill(pcs: pcs, onLess: onLess, onMore: onMore),
-                    )
-                  : Text('$pcs', style: AltaiType.qty.copyWith(fontSize: 20, color: c.brandInk)),
-            ),
-          ),
+        if (price != null) Text('RM $price', style: AltaiType.bodyStrong.copyWith(color: c.ink)),
         IconButton(tooltip: 'Remove', onPressed: onRemove, icon: const Icon(Icons.close_rounded)),
       ]),
-    );
-  }
-}
-
-/// A bundle's pieces as one small pill: − 3 +. A null callback greys its side out.
-class _PcsPill extends StatelessWidget {
-  const _PcsPill({required this.pcs, this.onLess, this.onMore});
-
-  final int pcs;
-  final VoidCallback? onLess;
-  final VoidCallback? onMore;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.altai;
-    Widget side(IconData icon, String tip, VoidCallback? onTap) => IconButton(
-          onPressed: onTap,
-          icon: Icon(icon, size: 18),
-          color: c.brandInk,
-          disabledColor: c.border,
-          tooltip: tip,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints.tightFor(width: 28, height: 28),
-        );
-    return Container(
-      decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(999)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          side(Icons.remove_rounded, 'One piece less', onLess),
-          SizedBox(
-            width: 24,
-            child: Text(
-              '$pcs',
-              textAlign: TextAlign.center,
-              style: AltaiType.qty.copyWith(fontSize: 18, color: c.brandInk),
-            ),
-          ),
-          side(Icons.add_rounded, 'One piece more', onMore),
-        ],
-      ),
     );
   }
 }

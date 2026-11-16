@@ -33,7 +33,7 @@ class FakeApi implements CheckoutApi {
       {
         'epc': epc,
         'found': true,
-        if (!epc.startsWith('A')) 'store_id': '12', // A = coming back (sold, no store); B = new, in stock
+        'store_id': '12',
         'product_name': epc.startsWith('A') ? 'Classic Tee' : 'Slim Jeans',
         'sku': epc.startsWith('A') ? 'CT-BLK-M' : 'JN-32',
       },

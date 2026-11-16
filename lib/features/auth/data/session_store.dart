@@ -8,18 +8,27 @@ class SavedSession {
     required this.session,
     required this.merchantId,
     required this.staffName,
+    this.loginId,
+    this.password,
   });
 
   /// The team API's SESSION token.
   final String session;
   final String merchantId;
   final String staffName;
+
+  /// What staff typed at login, so the app can log in again by itself after a restart (Altai
+  /// sessions end after a minute or two of no use). Null for a login saved before this was kept.
+  final String? loginId;
+  final String? password;
 }
 
 /// Keeps the login and the tablet's location on the tablet.
 ///
-/// The session works like a password, so it goes in secure storage (encrypted by Android),
-/// not in plain storage. The password itself is never saved.
+/// The session and the login (ID + password) go in secure storage, encrypted by Android with a
+/// key only this app can use, never in plain storage. The password is kept so the tablet stays
+/// logged in when the app is closed: Altai ends a session after a minute or two of no use, and
+/// the app logs in again by itself. Log out forgets all of it.
 ///
 /// The location is set once per tablet (from the login screen) and stays when staff log out.
 class SessionStore {
@@ -32,14 +41,21 @@ class SessionStore {
   static const _session = 'session';
   static const _merchantId = 'merchantId';
   static const _staffName = 'staffName';
+  static const _loginId = 'loginId';
+  static const _password = 'password';
   static const _locationId = 'locationStoreId';
   static const _locationName = 'locationStoreName';
 
-  /// After a successful login.
-  Future<void> saveLogin(String session, String merchantId, String staffName) async {
+  /// After a successful login (and each time the app logs in again by itself).
+  Future<void> saveLogin(String session, String merchantId, String staffName,
+      {String? loginId, String? password}) async {
     await _storage.write(key: _session, value: session);
     await _storage.write(key: _merchantId, value: merchantId);
     await _storage.write(key: _staffName, value: staffName);
+    if (loginId != null && password != null) {
+      await _storage.write(key: _loginId, value: loginId);
+      await _storage.write(key: _password, value: password);
+    }
   }
 
   /// When the app opens. Returns null if nobody is logged in.
@@ -48,7 +64,13 @@ class SessionStore {
     final merchantId = await _storage.read(key: _merchantId);
     final staffName = await _storage.read(key: _staffName);
     if (session == null || merchantId == null || staffName == null) return null;
-    return SavedSession(session: session, merchantId: merchantId, staffName: staffName);
+    return SavedSession(
+      session: session,
+      merchantId: merchantId,
+      staffName: staffName,
+      loginId: await _storage.read(key: _loginId),
+      password: await _storage.read(key: _password),
+    );
   }
 
   /// On log out, or when the saved session has expired. The location stays.
@@ -56,6 +78,8 @@ class SessionStore {
     await _storage.delete(key: _session);
     await _storage.delete(key: _merchantId);
     await _storage.delete(key: _staffName);
+    await _storage.delete(key: _loginId);
+    await _storage.delete(key: _password);
   }
 
   /// The store this tablet is in, or null when it hasn't been set yet.

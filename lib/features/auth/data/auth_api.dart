@@ -10,8 +10,8 @@ class AuthApi {
   final ApiClient _api;
   final SessionStore _session;
 
-  // Kept in memory only (never saved), so an expired session can be renewed without
-  // interrupting the cashier. After the app restarts, staff log in again when it expires.
+  // So an expired session can be renewed without interrupting the cashier. Also saved (encrypted)
+  // with the session, so after the app restarts it can still log in again by itself.
   String? _loginId;
   String? _password;
 
@@ -34,22 +34,23 @@ class AuthApi {
     }
     _loginId = loginId;
     _password = password;
-    await _use(res, fallbackName: loginId);
+    await _use(res, fallbackName: loginId, loginId: loginId, password: password);
     ApiClient.sessionLog('login: got and saved ${ApiClient.tail(res.session)}');
     return Staff(res.name.isEmpty ? loginId : res.name);
   }
 
-  Future<void> _use(LoginResult res, {required String fallbackName}) async {
+  Future<void> _use(LoginResult res, {required String fallbackName, String? loginId, String? password}) async {
     _api.session = res.session;
     _api.merchantId = res.merchantId;
-    await _session.saveLogin(res.session, res.merchantId, res.name.isEmpty ? fallbackName : res.name);
+    await _session.saveLogin(res.session, res.merchantId, res.name.isEmpty ? fallbackName : res.name,
+        loginId: loginId, password: password);
   }
 
   Future<bool> _loginAgain() async {
     final id = _loginId;
     final pw = _password;
     if (id == null || pw == null) {
-      ApiClient.sessionLog('can\'t log in again by itself: no password since the app started');
+      ApiClient.sessionLog('can\'t log in again by itself: no saved login');
       return false;
     }
     try {
@@ -104,6 +105,9 @@ class AuthApi {
 
     _api.session = saved.session;
     _api.merchantId = saved.merchantId;
+    // The saved login lets the first call below log in again by itself if the session has ended.
+    _loginId = saved.loginId;
+    _password = saved.password;
     try {
       await stores(); // any call will do: it fails with 440 when the session has expired
       ApiClient.sessionLog('app opened: saved session still valid');

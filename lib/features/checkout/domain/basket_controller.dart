@@ -10,6 +10,7 @@ import 'receipt_no.dart';
 import 'checkout_summary.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../returns/domain/exchange.dart';
+import '../../../shared/reading_time.dart';
 
 /// Why a sale has no StoreHub receipt. Saved in the remark instead of the receipt number.
 const noReceiptReasons = ['StoreHub offline', 'Receipt lost', 'Staff purchase', 'Other'];
@@ -61,7 +62,24 @@ class BasketController extends ChangeNotifier {
   int _generation = 0; // answers for an older basket are ignored
 
   BasketPhase phase = BasketPhase.scanning;
-  String? message; // shown to the cashier
+
+  /// Shown to the cashier. While scanning it goes away by itself once there was time to read it;
+  /// on the Try again / check screens it stays.
+  String? get message => _message;
+  set message(String? m) {
+    if (m == _message) return; // the same message again doesn't keep it up longer
+    _message = m;
+    _messageTimer?.cancel();
+    if (m == null) return;
+    _messageTimer = Timer(readingTime(m), () {
+      if (phase != BasketPhase.scanning || _message != m) return;
+      _message = null;
+      notifyListeners();
+    });
+  }
+
+  String? _message;
+  Timer? _messageTimer;
   String? trxId; // set when done
 
   /// The StoreHub receipt this sale belongs to: what joins it to the StoreHub sale.
@@ -391,6 +409,7 @@ class BasketController extends ChangeNotifier {
   @override
   void dispose() {
     _timer?.cancel();
+    _messageTimer?.cancel();
     super.dispose();
   }
 }

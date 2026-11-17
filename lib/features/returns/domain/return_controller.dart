@@ -7,6 +7,7 @@ import '../../catalog/data/catalog_api.dart';
 import '../../checkout/data/checkout_api.dart';
 import '../../checkout/domain/basket.dart';
 import '../data/returns_api.dart';
+import '../../../shared/reading_time.dart';
 
 enum ReturnPhase {
   scanning, // adding items, receipt and reason
@@ -78,7 +79,24 @@ class ReturnController extends ChangeNotifier {
   int _generation = 0; // answers for an older return are ignored
 
   ReturnPhase phase = ReturnPhase.scanning;
-  String? message;
+
+  /// Shown to staff. While scanning it goes away by itself once there was time to read it;
+  /// on the Try again screens it stays.
+  String? get message => _message;
+  set message(String? m) {
+    if (m == _message) return; // the same message again doesn't keep it up longer
+    _message = m;
+    _messageTimer?.cancel();
+    if (m == null) return;
+    _messageTimer = Timer(readingTime(m), () {
+      if (phase != ReturnPhase.scanning || _message != m) return;
+      _message = null;
+      notifyListeners();
+    });
+  }
+
+  String? _message;
+  Timer? _messageTimer;
   String receiptNo = '';
   String? reason;
   String? trxId; // set once saved
@@ -367,6 +385,7 @@ class ReturnController extends ChangeNotifier {
   @override
   void dispose() {
     _timer?.cancel();
+    _messageTimer?.cancel();
     super.dispose();
   }
 }

@@ -1,7 +1,9 @@
 package tech.maxxtech.altai_pos
 
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -11,6 +13,12 @@ class MainActivity : FlutterActivity() {
     private val worker = Executors.newSingleThreadExecutor() // USB talk never runs on the UI thread
     private val main = Handler(Looper.getMainLooper())
     private var reader: SilionReader? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // A POS stays open all day: the screen never dims or locks while the app is on it.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)

@@ -36,6 +36,7 @@ class BasketController extends ChangeNotifier {
     this.catalog,
     this.known,
     this.checkDelay = const Duration(milliseconds: 250),
+    this.retryDelay = const Duration(seconds: 3),
     DateTime Function()? clock,
   }) : _clientRef = newClientRef(),
        _clock = clock ?? DateTime.now;
@@ -48,6 +49,42 @@ class BasketController extends ChangeNotifier {
   final String storeId;
   final String staffName; // saved in the remark of each sale
   final Duration checkDelay; // readers send tags in bursts, so wait and check them together
+  final Duration retryDelay; // with no internet, how long before the items are checked again
+
+  /// True while the last check got no answer (no Wi-Fi or no internet). The items wait, still
+  /// checking, and are checked again every [retryDelay] until an answer comes.
+  bool offline = false;
+
+  /// Red items, each going away by itself once there was time to read why.
+  final Map<String, Timer> _problemTimers = {};
+
+  /// Takes a red item off the screen after its reading time. Still on the pad, it stays out; taken
+  /// away and put back, it's read and checked again.
+  void _expireLater(String epc, String why) {
+    _problemTimers[epc]?.cancel();
+    _problemTimers[epc] = Timer(readingTime(why), () {
+      _problemTimers.remove(epc);
+      if (phase != BasketPhase.scanning || _items[epc]?.state != ItemState.problem) return;
+      _items.remove(epc);
+      _removed[epc] = 0;
+      notifyListeners();
+    });
+  }
+
+  /// No Wi-Fi or no internet: not the items' fault. They stay "checking" and are checked again
+  /// after [retryDelay], until an answer comes.
+  void _waitForInternet() {
+    offline = true;
+    _timer?.cancel();
+    _timer = Timer(retryDelay, _checkItems);
+  }
+
+  void _cancelProblemTimers() {
+    for (final t in _problemTimers.values) {
+      t.cancel();
+    }
+    _problemTimers.clear();
+  }
   /// The store's tags kept on the tablet (names shown at once). Null = none.
   final StoreTags? known;
   final CatalogApi? catalog;
@@ -243,6 +280,7 @@ class BasketController extends ChangeNotifier {
   void remove(String epc) {
     if (phase != BasketPhase.scanning) return;
     if (_items.remove(epc) != null) _removed[epc] = 0; // still on the pad: don't read it back in yet
+    _problemTimers.remove(epc)?.cancel();
     message = null;
     notifyListeners();
   }
@@ -250,6 +288,8 @@ class BasketController extends ChangeNotifier {
   /// Empties the screen for the next customer. Never reuses the old client ref.
   void reset() {
     _timer?.cancel();
+    _cancelProblemTimers();
+    offline = false;
     _generation++;
     _items.clear();
     _leftOut.clear();
@@ -272,6 +312,7 @@ class BasketController extends ChangeNotifier {
     for (final item in items) {
       if (item.state == ItemState.problem) _items[item.epc] = BasketItem(item.epc);
     }
+    _cancelProblemTimers();
     message = null;
     _scheduleCheck();
     notifyListeners();
@@ -306,10 +347,17 @@ class BasketController extends ChangeNotifier {
         tags.forEach(_apply);
       } on ApiException catch (e) {
         if (generation != _generation) return;
+        if (e.noAnswer) {
+          _waitForInternet();
+          notifyListeners();
+          return;
+        }
         if (e.sessionExpired) message = e.message;
         for (final epc in batch) {
           if (_items.containsKey(epc)) {
-            _items[epc] = BasketItem(epc, state: ItemState.problem, problem: 'Could not check: ${e.message}');
+            final why = 'Could not check: ${e.message}';
+            _items[epc] = BasketItem(epc, state: ItemState.problem, problem: why);
+            _expireLater(epc, why);
           }
         }
       }
@@ -321,6 +369,8 @@ class BasketController extends ChangeNotifier {
   void _apply(Map<String, dynamic> t) {
     final epc = t['epc'] as String;
     if (_items[epc]?.state != ItemState.checking) return;
+    if (t['no_answer'] == true) return _waitForInternet();
+    offline = false;
     if (t['found'] == false) {
       // No product behind this tag (a loose or test tag): not an item, so it's left out.
       _items.remove(epc);
@@ -329,7 +379,9 @@ class BasketController extends ChangeNotifier {
       message = '${ignoredUnknown == 1 ? '1 unknown tag' : '$ignoredUnknown unknown tags'} ignored (no product).';
       return;
     }
-    _items[epc] = itemFromInspection(t, storeId);
+    final item = itemFromInspection(t, storeId);
+    _items[epc] = item;
+    if (item.state == ItemState.problem) _expireLater(epc, item.problem ?? '');
   }
 
   /// Tags with no product, left out of this basket.
@@ -410,6 +462,7 @@ class BasketController extends ChangeNotifier {
   void dispose() {
     _timer?.cancel();
     _messageTimer?.cancel();
+    _cancelProblemTimers();
     super.dispose();
   }
 }

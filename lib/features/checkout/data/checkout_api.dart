@@ -92,7 +92,8 @@ class CheckoutApi {
     } on ApiException catch (e) {
       if (e.sessionExpired) rethrow; // stops the whole check: staff must log in
       if (e.refused) return {'epc': epc, 'found': false}; // TagLookup answers { error } for an unknown tag
-      return {'epc': epc, 'found': null, 'error': e.message};
+      // no_answer: no Wi-Fi or no internet, so the tag can be checked again later.
+      return {'epc': epc, 'found': null, 'error': e.message, 'no_answer': e.noAnswer};
     }
   }
 

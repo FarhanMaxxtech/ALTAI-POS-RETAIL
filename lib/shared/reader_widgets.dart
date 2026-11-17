@@ -59,3 +59,6 @@ class ReaderProblem extends StatelessWidget {
     );
   }
 }
+
+/// Shown while a check gets no answer: the items wait and are checked again on their own.
+const offlineText = 'No internet connection. Check the Wi-Fi: the items will be checked as soon as it is back.';

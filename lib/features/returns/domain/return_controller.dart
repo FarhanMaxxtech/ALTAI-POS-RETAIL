@@ -58,6 +58,7 @@ class ReturnController extends ChangeNotifier {
     this.staffName = '',
     this.catalog,
     this.checkDelay = const Duration(milliseconds: 250),
+    this.retryDelay = const Duration(seconds: 3),
   }) : _clientRef = newClientRef();
 
   static const maxItems = 200;
@@ -68,6 +69,43 @@ class ReturnController extends ChangeNotifier {
   final String staffName;
   final CatalogApi? catalog;
   final Duration checkDelay;
+  final Duration retryDelay; // with no internet, how long before the items are checked again
+
+  /// True while the last check got no answer (no Wi-Fi or no internet). The items wait, still
+  /// checking, and are checked again every [retryDelay] until an answer comes.
+  bool offline = false;
+
+  /// Red items, each going away by itself once there was time to read why.
+  final Map<String, Timer> _problemTimers = {};
+
+  /// Takes a red item off the screen after its reading time. Still on the pad, it stays out; taken
+  /// away and put back, it's read and checked again.
+  void _expireLater(String epc, String why) {
+    _problemTimers[epc]?.cancel();
+    _problemTimers[epc] = Timer(readingTime(why), () {
+      _problemTimers.remove(epc);
+      if (phase != ReturnPhase.scanning || _items[epc]?.state != ItemState.problem) return;
+      _items.remove(epc);
+      _pcs.remove(epc);
+      _removed[epc] = 0;
+      notifyListeners();
+    });
+  }
+
+  /// No Wi-Fi or no internet: not the items' fault. They stay "checking" and are checked again
+  /// after [retryDelay], until an answer comes.
+  void _waitForInternet() {
+    offline = true;
+    _timer?.cancel();
+    _timer = Timer(retryDelay, _checkItems);
+  }
+
+  void _cancelProblemTimers() {
+    for (final t in _problemTimers.values) {
+      t.cancel();
+    }
+    _problemTimers.clear();
+  }
 
   final Map<String, BasketItem> _items = {};
 
@@ -214,6 +252,7 @@ class ReturnController extends ChangeNotifier {
     if (phase != ReturnPhase.scanning) return;
     if (_items.remove(epc) != null) _removed[epc] = 0; // still on the pad: don't read it back in yet
     _pcs.remove(epc);
+    _problemTimers.remove(epc)?.cancel();
     message = null;
     notifyListeners();
   }
@@ -233,6 +272,8 @@ class ReturnController extends ChangeNotifier {
   /// Empties the screen for the next return. Never reuses the old client ref.
   void reset() {
     _timer?.cancel();
+    _cancelProblemTimers();
+    offline = false;
     _generation++;
     _items.clear();
     _leftOut.clear();
@@ -275,15 +316,30 @@ class ReturnController extends ChangeNotifier {
             }
             continue;
           }
+          if (t['no_answer'] == true) {
+            if (_items[t['epc']]?.state == ItemState.checking) _waitForInternet();
+            continue;
+          }
+          offline = false;
           final item = returnItemFromInspection(t);
-          if (_items.containsKey(item.epc)) _items[item.epc] = item;
+          if (_items.containsKey(item.epc)) {
+            _items[item.epc] = item;
+            if (item.state == ItemState.problem) _expireLater(item.epc, item.problem ?? '');
+          }
         }
       } on ApiException catch (e) {
         if (generation != _generation) return;
+        if (e.noAnswer) {
+          _waitForInternet();
+          notifyListeners();
+          return;
+        }
         if (e.sessionExpired) message = e.message;
         for (final epc in batch) {
           if (_items.containsKey(epc)) {
-            _items[epc] = BasketItem(epc, state: ItemState.problem, problem: 'Could not check: ${e.message}');
+            final why = 'Could not check: ${e.message}';
+            _items[epc] = BasketItem(epc, state: ItemState.problem, problem: why);
+            _expireLater(epc, why);
           }
         }
       }
@@ -371,9 +427,11 @@ class ReturnController extends ChangeNotifier {
       final epc = m.group(1)!.toUpperCase();
       final old = _items[epc];
       if (old == null) continue;
+      final why = "Still in stock at ${m.group(2)}: it was never sold, so it can't be returned";
+      _expireLater(epc, why);
       _items[epc] = BasketItem(epc,
           state: ItemState.problem,
-          problem: "Still in stock at ${m.group(2)}: it was never sold, so it can't be returned",
+          problem: why,
           productName: old.productName,
           variation: old.variation,
           sku: old.sku);
@@ -386,6 +444,7 @@ class ReturnController extends ChangeNotifier {
   void dispose() {
     _timer?.cancel();
     _messageTimer?.cancel();
+    _cancelProblemTimers();
     super.dispose();
   }
 }

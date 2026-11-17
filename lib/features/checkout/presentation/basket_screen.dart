@@ -562,6 +562,7 @@ class _BasketScreenState extends State<BasketScreen> {
           _receiptBar(context),
           const SizedBox(height: D.space2),
           _scanBar(context, problems.length),
+          if (_basket.offline) ...[const SizedBox(height: D.space3), const AltaiNotice(offlineText, warning: true)],
           if (_basket.message != null) ...[const SizedBox(height: D.space3), AltaiNotice(_basket.message!)],
           const SizedBox(height: D.space3),
           Row(

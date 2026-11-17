@@ -247,6 +247,10 @@ class _ReturnScreenState extends State<ReturnScreen> {
                 const SizedBox(height: D.space3),
                 ReaderProblem(session: _reader),
               ],
+              if (_return.offline) ...[
+                const SizedBox(height: D.space3),
+                const AltaiNotice(offlineText, warning: true),
+              ],
               if (_return.message != null) ...[
                 const SizedBox(height: D.space3),
                 AltaiNotice(_return.message!),

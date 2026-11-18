@@ -57,13 +57,19 @@ class BasketController extends ChangeNotifier {
 
   /// Red items, each going away by itself once there was time to read why.
   final Map<String, Timer> _problemTimers = {};
+  final Map<String, DateTime> _problemDue = {};
+
+  /// When a red item goes away by itself, for the "Goes away in 4 s" on its card. Null = not red.
+  DateTime? goesAwayAt(String epc) => _problemDue[epc];
 
   /// Takes a red item off the screen after its reading time. Still on the pad, it stays out; taken
   /// away and put back, it's read and checked again.
   void _expireLater(String epc, String why) {
     _problemTimers[epc]?.cancel();
+    _problemDue[epc] = DateTime.now().add(readingTime(why));
     _problemTimers[epc] = Timer(readingTime(why), () {
       _problemTimers.remove(epc);
+      _problemDue.remove(epc);
       if (phase != BasketPhase.scanning || _items[epc]?.state != ItemState.problem) return;
       _items.remove(epc);
       _removed[epc] = 0;
@@ -84,6 +90,7 @@ class BasketController extends ChangeNotifier {
       t.cancel();
     }
     _problemTimers.clear();
+    _problemDue.clear();
   }
   /// The store's tags kept on the tablet (names shown at once). Null = none.
   final StoreTags? known;
@@ -171,7 +178,7 @@ class BasketController extends ChangeNotifier {
   /// What still stops Confirm, in words for the cashier. Null when nothing does.
   String? get missing {
     if (_items.isEmpty) return null;
-    if (hasProblems) return 'Remove or re-check the red tags to continue.';
+    if (hasProblems) return 'Waiting for the red item to go';
     if (!hasReceipt) return receiptCheck.error ?? 'Enter the StoreHub receipt number.';
     return null;
   }
@@ -281,6 +288,7 @@ class BasketController extends ChangeNotifier {
     if (phase != BasketPhase.scanning) return;
     if (_items.remove(epc) != null) _removed[epc] = 0; // still on the pad: don't read it back in yet
     _problemTimers.remove(epc)?.cancel();
+    _problemDue.remove(epc);
     message = null;
     notifyListeners();
   }

@@ -102,8 +102,11 @@ int? toCents(String? price) {
   return ringgit * 100 + sen;
 }
 
-/// 4990 → "49.90"
-String formatRm(int cents) => '${cents ~/ 100}.${(cents % 100).toString().padLeft(2, '0')}';
+/// 4990 → "49.90", 118480 → "1,184.80"
+String formatRm(int cents) {
+  final ringgit = (cents ~/ 100).toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+  return '$ringgit.${(cents % 100).toString().padLeft(2, '0')}';
+}
 
 /// Altai's error when a bound item (e.g. a stone) is checked out without the product it's bound to
 /// (e.g. its ring), in words for the cashier. Any other message comes back unchanged.

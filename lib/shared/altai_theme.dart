@@ -14,6 +14,7 @@ class AltaiColors extends ThemeExtension<AltaiColors> {
     required this.onBrand,
     required this.brandInk,
     required this.brandTint,
+    required this.brandBorder,
     required this.surface100,
     required this.surfaceRaised,
     required this.surfaceSunken,
@@ -31,7 +32,7 @@ class AltaiColors extends ThemeExtension<AltaiColors> {
   });
 
   final Color logoGreenTop, logoGreenBottom, onLogoGreen;
-  final Color brand, onBrand, brandInk, brandTint;
+  final Color brand, onBrand, brandInk, brandTint, brandBorder;
   final Color surface100, surfaceRaised, surfaceSunken;
   final Color border, borderStrong;
   final Color ink, inkMuted;
@@ -45,14 +46,16 @@ class AltaiColors extends ThemeExtension<AltaiColors> {
     brand: Color(0xFF3B6D11),
     onBrand: Color(0xFFFFFFFF),
     brandInk: Color(0xFF3B6D11),
-    brandTint: Color(0xFFE5EFD9),
-    surface100: Color(0xFFF4F6F0),
+    brandTint: Color(0xFFEAF3DE),
+    brandBorder: Color(0xFFB5D18F),
+    // The Figma redesign: a neutral grey canvas, white cards, near-black text.
+    surface100: Color(0xFFF5F5F5),
     surfaceRaised: Color(0xFFFFFFFF),
-    surfaceSunken: Color(0xFFE9EEE2),
-    border: Color(0xFFDCE3D3),
-    borderStrong: Color(0xFF7D8A73),
-    ink: Color(0xFF18220F),
-    inkMuted: Color(0xFF556150),
+    surfaceSunken: Color(0xFFF3F3F3),
+    border: Color(0xFFE8E8E8),
+    borderStrong: Color(0xFFC7C7CC),
+    ink: Color(0xFF1D1D1F),
+    inkMuted: Color(0xFF6E6E73),
     warning: Color(0xFF8A5300),
     warningTint: Color(0xFFFBEFD9),
     danger: Color(0xFFB3261E),
@@ -70,6 +73,7 @@ class AltaiColors extends ThemeExtension<AltaiColors> {
     onBrand: Color(0xFF10200A),
     brandInk: Color(0xFF9FD06A),
     brandTint: Color(0xFF22351A),
+    brandBorder: Color(0xFF3F5C2A),
     surface100: Color(0xFF0F150B),
     surfaceRaised: Color(0xFF182112),
     surfaceSunken: Color(0xFF0A0F07),
@@ -154,7 +158,7 @@ ThemeData altaiTheme(Brightness brightness) {
     scrim: c.scrim,
   );
   OutlineInputBorder border(Color color, [double width = 1.5]) => OutlineInputBorder(
-        borderRadius: BorderRadius.circular(D.radiusMd),
+        borderRadius: BorderRadius.circular(10),
         borderSide: BorderSide(color: color, width: width),
       );
 
@@ -181,9 +185,9 @@ ThemeData altaiTheme(Brightness brightness) {
       contentPadding: const EdgeInsets.symmetric(horizontal: D.space4, vertical: 20),
       labelStyle: AltaiType.body.copyWith(color: c.inkMuted),
       hintStyle: AltaiType.body.copyWith(color: c.inkMuted),
-      border: border(c.borderStrong),
-      enabledBorder: border(c.borderStrong),
-      focusedBorder: border(c.focus, 2),
+      border: border(c.border, 1),
+      enabledBorder: border(c.border, 1),
+      focusedBorder: border(c.brand, 1.5),
       errorBorder: border(c.danger),
     ),
     dividerTheme: DividerThemeData(color: c.border, thickness: 1, space: 1),

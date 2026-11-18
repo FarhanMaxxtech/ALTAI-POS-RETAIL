@@ -77,13 +77,19 @@ class ReturnController extends ChangeNotifier {
 
   /// Red items, each going away by itself once there was time to read why.
   final Map<String, Timer> _problemTimers = {};
+  final Map<String, DateTime> _problemDue = {};
+
+  /// When a red item goes away by itself, for the "Goes away in 4 s" on its card. Null = not red.
+  DateTime? goesAwayAt(String epc) => _problemDue[epc];
 
   /// Takes a red item off the screen after its reading time. Still on the pad, it stays out; taken
   /// away and put back, it's read and checked again.
   void _expireLater(String epc, String why) {
     _problemTimers[epc]?.cancel();
+    _problemDue[epc] = DateTime.now().add(readingTime(why));
     _problemTimers[epc] = Timer(readingTime(why), () {
       _problemTimers.remove(epc);
+      _problemDue.remove(epc);
       if (phase != ReturnPhase.scanning || _items[epc]?.state != ItemState.problem) return;
       _items.remove(epc);
       _pcs.remove(epc);
@@ -105,6 +111,7 @@ class ReturnController extends ChangeNotifier {
       t.cancel();
     }
     _problemTimers.clear();
+    _problemDue.clear();
   }
 
   final Map<String, BasketItem> _items = {};
@@ -173,7 +180,7 @@ class ReturnController extends ChangeNotifier {
   String? get missing {
     if (_items.isEmpty) return 'Scan the items coming back.';
     if (isChecking) return 'Checking the items…';
-    if (hasProblems) return 'Remove the red items to continue.';
+    if (hasProblems) return 'Waiting for the red item to go';
     if (receiptNo.trim().isEmpty) return 'Enter or scan the receipt / order number.';
     if (reason == null) return 'Pick a reason.';
     return null;
@@ -253,6 +260,7 @@ class ReturnController extends ChangeNotifier {
     if (_items.remove(epc) != null) _removed[epc] = 0; // still on the pad: don't read it back in yet
     _pcs.remove(epc);
     _problemTimers.remove(epc)?.cancel();
+    _problemDue.remove(epc);
     message = null;
     notifyListeners();
   }

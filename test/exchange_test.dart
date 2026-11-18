@@ -114,7 +114,6 @@ void main() {
           storeId: '12',
           storeName: 'MidValley',
           staffName: 'Aina',
-          onLogout: () {},
         ),
       ),
     );
@@ -123,7 +122,7 @@ void main() {
     await tester.tap(find.byTooltip('Exchange'));
     await tester.pumpAndSettle();
     expect(find.text('Exchange · 1 of 2: items back'), findsOneWidget);
-    await tester.enterText(textBox('StoreHub receipt no., order no. or ID'), '0022607201446208');
+    await tester.enterText(find.byKey(const ValueKey('receipt-field')), '0022607201446208');
     await scanWithReader(tester, reader, ['A2801160000000A1']);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Wrong size'));
@@ -142,7 +141,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Customer pays RM 10.00 more on StoreHub'), findsOneWidget);
 
-    await tester.tap(find.text('Confirm & submit'));
+    await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Exchange: 1 pc already back in stock from receipt 0022607201446208'), findsOneWidget);
     await tester.tap(find.text('Submit'));
@@ -171,7 +170,6 @@ void main() {
           storeId: '12',
           storeName: 'MidValley',
           staffName: 'Aina',
-          onLogout: () {},
           askReceiptOnScan: false,
         ),
       ),

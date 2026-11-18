@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/beeper.dart';
-import '../../../shared/keyboard.dart';
+import '../../../shared/pos_layout.dart';
 import '../../../shared/reader_session.dart';
 import '../../../shared/reader_widgets.dart';
 import '../../../shared/rfid_reader.dart';
@@ -15,12 +15,13 @@ import '../data/returns_api.dart';
 import '../domain/exchange.dart';
 import '../domain/return_controller.dart';
 
-/// Return & refund: the items go back into this store's stock here; the money goes back on StoreHub.
+/// Return & refund (Figma "New 07–08"): the items go back into this store's stock here; the money
+/// goes back on StoreHub.
 ///
 /// With [exchange] it's step 1 of an exchange: once the items are back in stock the screen closes and
 /// hands an [ExchangeReturn] to the checkout, where the new items are scanned.
 ///
-/// The items coming back are read straight from the USB RFID reader into the list, like at checkout:
+/// The items coming back are read straight from the USB RFID reader as cards, like at checkout:
 /// it reads the whole time the screen is open (paused only while the confirm box is up).
 class ReturnScreen extends StatefulWidget {
   const ReturnScreen({
@@ -33,6 +34,7 @@ class ReturnScreen extends StatefulWidget {
     this.catalog,
     this.exchange = false,
     this.tagReader = const UsbTagReader(),
+    this.onReturned,
   });
 
   final CheckoutApi inspector;
@@ -47,6 +49,9 @@ class ReturnScreen extends StatefulWidget {
 
   /// The USB RFID reader this screen drives.
   final TagReader tagReader;
+
+  /// A return went through, with this many pieces (for the start page's "Returns today").
+  final void Function(int pieces)? onReturned;
 
   @override
   State<ReturnScreen> createState() => _ReturnScreenState();
@@ -67,6 +72,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
   bool _handedBack = false; // exchange: the result is passed back once
   bool _pausedNow = false; // the confirm box is open: the reader waits
   ReturnPhase _lastPhase = ReturnPhase.scanning;
+  String _query = '';
 
   bool get _showPrices => widget.catalog != null;
 
@@ -104,6 +110,9 @@ class _ReturnScreenState extends State<ReturnScreen> {
     // Back to scanning (a new return, or the submit didn't go through): read again.
     final phase = _return.phase;
     if (phase != _lastPhase && phase == ReturnPhase.scanning && !_pausedNow) _reader.start();
+    if (phase != _lastPhase && phase == ReturnPhase.done && !widget.exchange) {
+      widget.onReturned?.call(_return.pieceCount);
+    }
     _lastPhase = phase;
 
     if (widget.exchange && _return.phase == ReturnPhase.done && !_handedBack) {
@@ -128,15 +137,15 @@ class _ReturnScreenState extends State<ReturnScreen> {
   }
 
   /// A return that may be half done stays on screen until it's finished.
-  void _leave() {
+  bool get _canLeave {
     final phase = _return.phase;
-    if (phase == ReturnPhase.scanning || phase == ReturnPhase.done) {
-      Navigator.of(context).pop();
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Finish this return first: tap Try again.')));
-    }
+    if (phase == ReturnPhase.scanning || phase == ReturnPhase.done) return true;
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Finish this return first: tap Try again.')));
+    return false;
   }
+
+  Future<bool> _mayLeave() async => _canLeave;
 
   /// Last look: this changes live stock and can't be undone from the tablet.
   Future<void> _confirm() async {
@@ -148,7 +157,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(widget.exchange ? 'Confirm exchange: items back' : 'Confirm return',
-            style: AltaiType.title.copyWith(color: c.ink)),
+            style: AltaiType.title.copyWith(fontWeight: FontWeight.w700, color: c.ink)),
         content: Text(
           widget.exchange
               ? '${plural(_return.pieceCount, 'pc')} go back into stock at ${widget.storeName}. '
@@ -176,149 +185,288 @@ class _ReturnScreenState extends State<ReturnScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      appBar: AltaiAppBar(
-        title: widget.exchange ? 'Exchange · 1 of 2: items back' : 'Return & refund',
-        subtitle: widget.storeName,
-        onBack: _leave,
-        actions: [AppBarText(widget.staffName)],
-      ),
-      body: ListenableBuilder(
-        listenable: _return,
-        builder: (context, _) => switch (_return.phase) {
-          ReturnPhase.scanning => _scanning(context),
-          ReturnPhase.sending => _sending(context),
-          ReturnPhase.done => widget.exchange ? _sending(context) : _done(context), // closes by itself
-          ReturnPhase.retry => _Problem(
-              icon: Icons.wifi_off_rounded,
-              title: 'No confirmation yet',
-              body: '${_return.message} It is safe to try again: this return can only be saved once.',
-              onRetry: _return.submit),
-          ReturnPhase.notApproved => _Problem(
-              icon: Icons.hourglass_top_rounded,
-              title: 'Saved, but stock isn\'t back yet',
-              body: '${_return.message} Try again approves the same return.',
-              onRetry: _return.submit),
+    return ListenableBuilder(
+      listenable: _return,
+      builder: (context, _) => PopScope(
+        canPop: _return.phase == ReturnPhase.scanning || _return.phase == ReturnPhase.done,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _canLeave;
         },
+        child: AppShell(
+          section: Section.returns,
+          searchHint: 'Search items coming back…',
+          onSearch: (q) => setState(() => _query = q.trim().toLowerCase()),
+          onRefresh: _return.phase == ReturnPhase.scanning ? _reader.start : null,
+          refreshTooltip: 'Read again',
+          offline: _return.offline,
+          beforeLeave: _mayLeave,
+          onBack: widget.exchange ? () => Navigator.of(context).maybePop() : null,
+          body: switch (_return.phase) {
+            ReturnPhase.scanning => _scanning(context),
+            ReturnPhase.sending => _sending(context),
+            ReturnPhase.done => widget.exchange ? _sending(context) : _done(context), // closes by itself
+            ReturnPhase.retry => _Problem(
+                icon: Icons.wifi_off_rounded,
+                title: 'No confirmation yet',
+                body: '${_return.message} It is safe to try again: this return can only be saved once.',
+                onRetry: _return.submit),
+            ReturnPhase.notApproved => _Problem(
+                icon: Icons.hourglass_top_rounded,
+                title: 'Saved, but stock isn\'t back yet',
+                body: '${_return.message} Try again approves the same return.',
+                onRetry: _return.submit),
+          },
+        ),
       ),
     );
   }
 
   /* ---------------- Scanning ---------------- */
 
+  bool _matches(BasketItem i) {
+    if (_query.isEmpty) return true;
+    return [i.productName, i.variation, i.sku, i.problem].any((t) => t != null && t.toLowerCase().contains(_query));
+  }
+
+  String? _amount(BasketItem i) {
+    if (!_showPrices) return null;
+    final unit = toCents(_return.priceOf(i));
+    return unit == null ? 'No price' : 'RM ${formatRm(unit * _return.pcsOf(i))}';
+  }
+
   Widget _scanning(BuildContext context) {
     final c = context.altai;
     final items = _return.items.reversed.toList();
-    final missing = _return.missing;
-    return Column(children: [
-      Expanded(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 820),
-            child: ListView(padding: const EdgeInsets.all(D.space6), children: [
-              // 1. Which sale: the receipt no., order no. or ID, typed from the iPad.
-              TextField(
-                onTap: showKeyboard,
-                controller: _receipt,
-                style: AltaiType.body.copyWith(color: c.ink),
-                decoration: InputDecoration(
-                  labelText: 'StoreHub receipt no., order no. or ID',
-                  hintText: 'Type it from the iPad',
-                  prefixIcon: const Icon(Icons.receipt_long_rounded),
-                ),
-                textCapitalization: TextCapitalization.characters,
-                autocorrect: false,
-                onChanged: _return.setReceipt,
-              ),
-              const SizedBox(height: D.space4),
-              // 2. The items coming back: read straight into the list below.
-              Row(children: [
-                Icon(Icons.sell_outlined, color: c.brandInk),
-                const SizedBox(width: D.space3),
-                Expanded(
-                  child: Text('Items coming back: put them near the reader. They come in on their own.',
-                      style: AltaiType.body.copyWith(color: c.ink)),
-                ),
-                const SizedBox(width: D.space3),
-                ReaderDot(on: _reader.reading),
-              ]),
-              if (_reader.error != null) ...[
-                const SizedBox(height: D.space3),
-                ReaderProblem(session: _reader),
-              ],
-              if (_return.offline) ...[
-                const SizedBox(height: D.space3),
-                const AltaiNotice(offlineText, warning: true),
-              ],
-              if (_return.message != null) ...[
-                const SizedBox(height: D.space3),
-                AltaiNotice(_return.message!),
-              ],
-              const SizedBox(height: D.space4),
-              if (items.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: D.space6),
-                  child: Text('No items yet. Put the returned items near the reader.',
-                      style: AltaiType.body.copyWith(color: c.inkMuted), textAlign: TextAlign.center),
-                ),
-              for (final i in items)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: D.space2),
-                  child: _ItemRow(
-                    item: i,
-                    image: _return.imageOf(i),
-                    showPrice: _showPrices,
-                    unit: toCents(_return.priceOf(i)),
-                    pcs: _return.pcsOf(i),
-                    onLess: _return.canRemovePc(i) ? () => _return.changePcs(i.epc, -1) : null,
-                    onMore: _return.canAddPc(i) ? () => _return.changePcs(i.epc, 1) : null,
-                    onRemove: () => _return.remove(i.epc),
-                  ),
-                ),
-              const SizedBox(height: D.space4),
-              Text('Reason', style: AltaiType.label.copyWith(color: c.inkMuted)),
-              const SizedBox(height: D.space2),
-              Wrap(spacing: D.space2, runSpacing: D.space2, children: [
-                for (final r in returnReasons)
-                  ChoiceChip(
-                    label: Text(r, style: AltaiType.body),
-                    selected: _return.reason == r,
-                    onSelected: (_) => _return.setReason(r),
-                  ),
-              ]),
-            ]),
-          ),
-        ),
-      ),
-      Divider(height: 1, color: c.border),
-      Container(
-        color: c.surfaceRaised,
-        padding: const EdgeInsets.all(D.space4),
-        child: SafeArea(
-          top: false,
-          child: Row(children: [
-            Text('${_return.pieceCount}', style: AltaiType.qty.copyWith(color: c.brandInk)),
-            const SizedBox(width: D.space1),
-            Text('pcs', style: AltaiType.label.copyWith(color: c.inkMuted)),
-            if (_showPrices) ...[
-              const SizedBox(width: D.space4),
-              Text('Refund RM ${formatRm(_return.refundCents)}', style: AltaiType.heading.copyWith(color: c.ink)),
+    final shown = [
+      ...items.where((i) => i.state == ItemState.problem),
+      ...items.where((i) => i.state != ItemState.problem),
+    ].where(_matches).toList();
+
+    final middle = Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          FilterBar(
+            chips: [
+              for (final r in returnReasons)
+                FilterChoice(r, selected: _return.reason == r, onTap: () => _return.setReason(r)),
             ],
-            const SizedBox(width: D.space4),
-            Expanded(
-              child: Text(missing ?? '', style: AltaiType.caption.copyWith(color: c.inkMuted)),
+            trailing: const BarNote('Reason'),
+          ),
+          if (widget.exchange) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(12)),
+              child: Row(
+                children: [
+                  Icon(Icons.swap_horiz_rounded, color: c.brandInk),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text('Exchange · 1 of 2: items back',
+                        style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.ink)),
+                  ),
+                ],
+              ),
             ),
-            AltaiButton('Clear', onPressed: _return.items.isEmpty ? null : _newReturn),
-            const SizedBox(width: D.space3),
-            AltaiButton(widget.exchange ? 'Return & next' : 'Return items',
-                onPressed: _return.canSubmit ? _confirm : null,
-                variant: AltaiButtonVariant.primary,
-                icon: widget.exchange ? Icons.arrow_forward_rounded : Icons.assignment_return_rounded),
-          ]),
-        ),
+          ],
+          if (_reader.error != null) ...[const SizedBox(height: 12), ReaderProblem(session: _reader)],
+          if (_return.offline) ...[const SizedBox(height: 12), const PageNotice(offlineText)],
+          if (_return.message != null) ...[
+            const SizedBox(height: 12),
+            PageNotice(_return.message!, icon: Icons.warning_amber_rounded, danger: true),
+          ],
+          const SizedBox(height: 16),
+          Expanded(
+            child: items.isEmpty
+                ? _EmptyState(reading: _reader.reading)
+                : ItemGrid(
+                    padding: const EdgeInsets.only(bottom: 24),
+                    children: [
+                      for (final i in shown)
+                        switch (i.state) {
+                          ItemState.problem => ItemCard(
+                            key: ValueKey('problem-${i.epc}'),
+                            look: CardLook.problem,
+                            title: i.productName ?? 'Unknown item',
+                            subtitle: i.problem ?? '',
+                            goesAwayAt: _return.goesAwayAt(i.epc),
+                            onTap: () => _details(i),
+                          ),
+                          ItemState.checking => ItemCard(
+                            key: ValueKey('checking-${i.epc}'),
+                            look: CardLook.checking,
+                            title: i.productName ?? 'Reading tag…',
+                            subtitle: i.variation ?? formatEpc(i.epc),
+                          ),
+                          ItemState.ok => ItemCard(
+                            key: ValueKey('card-${i.epc}'),
+                            title: i.productName ?? 'Unknown item',
+                            subtitle: [
+                              i.variation ?? i.sku ?? '',
+                              if (i.multiplier > 1) 'Bundle ×${i.multiplier}',
+                            ].where((s) => s.isNotEmpty).join(' · '),
+                            bottom: _amount(i),
+                            qty: _return.pcsOf(i),
+                            image: _return.imageOf(i),
+                            onTap: () => _details(i),
+                          ),
+                        },
+                    ],
+                  ),
+          ),
+        ],
       ),
-    ]);
+    );
+
+    return LayoutBuilder(
+      builder: (context, box) {
+        if (box.maxWidth >= 900) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [Expanded(child: middle), SidePanel(child: _panel(context))],
+          );
+        }
+        // Narrow screen (portrait): the order panel goes under the cards; a short screen scrolls.
+        const panelHeight = 420.0;
+        final middleHeight = (box.maxHeight - panelHeight).clamp(320.0, double.infinity);
+        final panel = Container(
+          height: panelHeight,
+          decoration: BoxDecoration(color: c.surfaceRaised, border: Border(top: BorderSide(color: c.border))),
+          padding: const EdgeInsets.all(16),
+          child: _panel(context),
+        );
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [SizedBox(height: middleHeight, child: middle), panel],
+          ),
+        );
+      },
+    );
+  }
+
+  /// A card's details: a bundle's pieces (− / +), and Remove.
+  Future<void> _details(BasketItem item) async {
+    final c = context.altai;
+    final remove = await showDialog<bool>(
+      context: context,
+      builder: (context) => ListenableBuilder(
+        listenable: _return,
+        builder: (context, _) {
+          final i = _return.items.where((x) => x.epc == item.epc).firstOrNull ?? item;
+          final problem = i.state == ItemState.problem;
+          return AlertDialog(
+            title: Text(i.productName ?? 'Unknown item',
+                style: AltaiType.title.copyWith(color: problem ? c.danger : c.ink)),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (problem) Text(i.problem ?? '', style: AltaiType.body.copyWith(color: c.ink)),
+                  if (i.variation case final v?) PanelRow('Colour / size', v),
+                  if (i.sku case final s?) PanelRow('SKU', s),
+                  if (_amount(i) case final a? when !problem) PanelRow('Refund', a),
+                  if (i.multiplier > 1 && !problem) ...[
+                    const SizedBox(height: D.space2),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text('Pieces coming back (bundle ×${i.multiplier})',
+                              style: AltaiType.label.copyWith(color: c.inkMuted)),
+                        ),
+                        _PcsPill(
+                          pcs: _return.pcsOf(i),
+                          onLess: _return.canRemovePc(i) ? () => _return.changePcs(i.epc, -1) : null,
+                          onMore: _return.canAddPc(i) ? () => _return.changePcs(i.epc, 1) : null,
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              AltaiButton('Remove', onPressed: () => Navigator.pop(context, true), variant: AltaiButtonVariant.danger),
+              AltaiButton('Close', onPressed: () => Navigator.pop(context, false), variant: AltaiButtonVariant.primary),
+            ],
+          );
+        },
+      ),
+    );
+    if (remove == true) _return.remove(item.epc);
+  }
+
+  /* ---------------- The panel on the right ---------------- */
+
+  Widget _panel(BuildContext context) {
+    final c = context.altai;
+    final ok = _return.items.reversed.where((i) => i.state == ItemState.ok).toList();
+    final problems = _return.items.where((i) => i.state == ItemState.problem).length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ReceiptField(
+          controller: _receipt,
+          label: 'StoreHub receipt no.',
+          hint: 'Receipt no., order no. or ID',
+          keyboardType: TextInputType.text,
+          onChanged: _return.setReceipt,
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: ok.isEmpty
+              ? Center(
+                  child: Text(
+                    _return.offline
+                        ? 'Waiting for the internet…'
+                        : _return.isChecking
+                        ? 'Checking the items…'
+                        : 'Nothing scanned yet',
+                    style: AltaiType.label.copyWith(color: c.inkMuted),
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: ok.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 4),
+                  itemBuilder: (context, n) {
+                    final i = ok[n];
+                    final unit = toCents(_return.priceOf(i));
+                    return PanelLine(
+                      key: ValueKey('line-${i.epc}'),
+                      qty: _return.pcsOf(i),
+                      name: i.productName ?? 'Unknown item',
+                      detail: i.variation ?? i.sku,
+                      amount: !_showPrices ? null : (unit == null ? '–' : formatRm(unit * _return.pcsOf(i))),
+                      shaded: n.isEven,
+                    );
+                  },
+                ),
+        ),
+        const SizedBox(height: 12),
+        PanelRow('Pieces coming back', '${_return.pieceCount}'),
+        if (problems > 0) PanelRow('Needs attention', '$problems', valueColor: c.danger),
+        PanelRow('Reason', _return.reason ?? '–'),
+        if (_showPrices) PanelTotal('Refund', 'RM ${formatRm(_return.refundCents)}'),
+        const SizedBox(height: 10),
+        if (_return.missing case final m?)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Text(m,
+                textAlign: TextAlign.center,
+                style: AltaiType.caption.copyWith(fontSize: 13, fontWeight: FontWeight.w500, color: c.inkMuted)),
+          ),
+        PanelButtons(
+          clear: 'Clear',
+          onClear: _return.items.isEmpty && _receipt.text.isEmpty ? null : _newReturn,
+          confirm: widget.exchange ? 'Return & next' : 'Return items',
+          onConfirm: _return.canSubmit ? _confirm : null,
+        ),
+      ],
+    );
   }
 
   /* ---------------- Other phases ---------------- */
@@ -334,51 +482,69 @@ class _ReturnScreenState extends State<ReturnScreen> {
     );
   }
 
+  /// Figma "New 08 Return - back in stock".
   Widget _done(BuildContext context) {
     final c = context.altai;
     final unpriced = _return.unpricedCount;
+    final nav = ShellScope.maybeOf(context);
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(D.space6),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
           child: Column(children: [
-            StatusCircle(icon: Icons.check_rounded, color: c.brand, onColor: c.onBrand),
-            const SizedBox(height: D.space4),
-            Text('Back in stock', style: AltaiType.title.copyWith(fontSize: 32, color: c.ink)),
+            Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(color: c.brand, shape: BoxShape.circle),
+              child: Icon(Icons.check_rounded, size: 52, color: c.onBrand),
+            ),
+            const SizedBox(height: 28),
+            Text('Back in stock', style: AltaiType.title.copyWith(fontSize: 32, fontWeight: FontWeight.w700, color: c.ink)),
+            const SizedBox(height: 4),
             Text(
-              '${plural(_return.pieceCount, 'pc')} · Receipt ${_return.receiptNo.trim()} · Adjustment ${_return.trxId}',
-              style: AltaiType.body.copyWith(color: c.inkMuted),
+              '${plural(_return.pieceCount, 'piece')} · Receipt ${_return.receiptNo.trim()} · Adjustment ${_return.trxId}',
+              style: AltaiType.body.copyWith(fontSize: 16, color: c.inkMuted),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: D.space6),
+            const SizedBox(height: 24),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(D.space6),
-              decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(D.radiusMd)),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+              decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(16)),
               child: Column(children: [
-                Text('NOW REFUND ON STOREHUB', style: AltaiType.label.copyWith(color: c.inkMuted)),
+                Text('Now refund on StoreHub',
+                    style: AltaiType.label.copyWith(fontSize: 16, fontWeight: FontWeight.w600, color: c.logoGreenBottom)),
                 if (_showPrices)
                   Text('RM ${formatRm(_return.refundCents)}',
-                      style: AltaiType.qtyTotal.copyWith(fontSize: 48, color: c.brandInk)),
+                      style: AltaiType.qtyTotal.copyWith(fontSize: 56, color: c.brandInk)),
+                const SizedBox(height: 4),
                 Text(
                   unpriced > 0
                       ? '${plural(unpriced, 'item')} had no price here: check the receipt.'
                       : 'Use the amount on the receipt if it differs (discounts).',
-                  style: AltaiType.caption.copyWith(color: c.ink),
+                  style: AltaiType.caption.copyWith(color: c.logoGreenBottom),
                   textAlign: TextAlign.center,
                 ),
               ]),
             ),
-            const SizedBox(height: D.space6),
+            const SizedBox(height: 32),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              AltaiButton('Back to checkout', onPressed: () => Navigator.of(context).pop(), large: true),
-              const SizedBox(width: D.space3),
-              AltaiButton('New return',
-                  onPressed: _newReturn,
-                  variant: AltaiButtonVariant.primary,
-                  icon: Icons.assignment_return_rounded,
-                  large: true),
+              SizedBox(
+                width: 240,
+                child: AltaiButton('Back to checkout',
+                    onPressed: () => nav == null ? Navigator.of(context).pop() : nav.open(Section.checkout),
+                    expand: true),
+              ),
+              const SizedBox(width: 16),
+              SizedBox(
+                width: 240,
+                child: AltaiButton('New return',
+                    onPressed: _newReturn,
+                    variant: AltaiButtonVariant.primary,
+                    icon: Icons.assignment_return_outlined,
+                    expand: true),
+              ),
             ]),
           ]),
         ),
@@ -387,99 +553,39 @@ class _ReturnScreenState extends State<ReturnScreen> {
   }
 }
 
-// The columns on the right of each row, so prices and pieces line up straight down.
-const _priceCol = 104.0;
-const _gapCol = 16.0;
-const _qtyCol = 108.0;
+/// Nothing read yet.
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.reading});
 
-class _ItemRow extends StatelessWidget {
-  const _ItemRow({
-    required this.item,
-    required this.image,
-    required this.showPrice,
-    required this.unit,
-    required this.pcs,
-    required this.onRemove,
-    this.onLess,
-    this.onMore,
-  });
-
-  final BasketItem item;
-  final String? image;
-  final bool showPrice;
-  final int? unit; // price of one piece in cents, null = no price
-  final int pcs; // pieces coming back on this tag
-  final VoidCallback onRemove;
-
-  /// A bundle tag's − and +. Null = not allowed now (at 1, at the whole bundle, or not checked yet).
-  final VoidCallback? onLess;
-  final VoidCallback? onMore;
+  final bool reading;
 
   @override
   Widget build(BuildContext context) {
     final c = context.altai;
-    final problem = item.state == ItemState.problem;
-    final checking = item.state == ItemState.checking;
-    final bundle = item.multiplier > 1;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: D.space4, vertical: D.space3),
-      decoration: BoxDecoration(
-        color: problem ? c.dangerTint : c.surfaceRaised,
-        borderRadius: BorderRadius.circular(D.radiusMd),
-        border: Border.all(color: c.border),
-      ),
-      child: Row(children: [
-        ProductThumb(url: image, size: 48),
-        const SizedBox(width: D.space3),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(
-              checking ? 'Checking…' : item.productName ?? 'Unknown item',
-              style: AltaiType.bodyStrong.copyWith(color: c.ink),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(color: c.surfaceRaised, borderRadius: BorderRadius.circular(14)),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(vertical: 64, horizontal: 24),
+          child: Column(children: [
+            Container(
+              width: 128,
+              height: 128,
+              decoration: BoxDecoration(color: c.brandTint, shape: BoxShape.circle),
+              child: Icon(Icons.assignment_return_outlined, size: 56, color: c.brandInk),
             ),
-            if (problem)
-              Text(item.problem ?? '', style: AltaiType.caption.copyWith(color: c.danger))
-            else if (item.variation ?? item.sku case final sub?)
-              Text(
-                [sub, if (bundle) 'Bundle ×${item.multiplier}'].join(' · '),
-                style: AltaiType.caption.copyWith(color: c.inkMuted),
-              ),
+            const SizedBox(height: 28),
+            Text('Items coming back: put them near the reader.',
+                textAlign: TextAlign.center,
+                style: AltaiType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w700, color: c.ink)),
+            const SizedBox(height: 6),
+            Text(reading ? 'Reader on: they come in on their own.' : 'Reader off',
+                textAlign: TextAlign.center, style: AltaiType.body.copyWith(fontSize: 16, color: c.inkMuted)),
           ]),
         ),
-        if (showPrice && !problem && !checking) ...[
-          SizedBox(
-            width: _priceCol,
-            // Always one line: "RM" and the amount together, shrunk a little if it's long.
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerRight,
-              child: Text(
-                unit == null ? 'No price' : 'RM ${formatRm(unit! * pcs)}',
-                maxLines: 1,
-                softWrap: false,
-                style: unit == null
-                    ? AltaiType.caption.copyWith(color: c.warning)
-                    : AltaiType.bodyStrong.copyWith(color: c.ink),
-              ),
-            ),
-          ),
-          const SizedBox(width: _gapCol),
-        ],
-        if (!problem && !checking)
-          SizedBox(
-            width: _qtyCol,
-            child: Center(
-              child: bundle
-                  // A bundle tag: − pcs + (1 unless the customer bought more of it).
-                  ? FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: _PcsPill(pcs: pcs, onLess: onLess, onMore: onMore),
-                    )
-                  : Text('$pcs', style: AltaiType.qty.copyWith(fontSize: 20, color: c.brandInk)),
-            ),
-          ),
-        IconButton(tooltip: 'Remove', onPressed: onRemove, icon: const Icon(Icons.close_rounded)),
-      ]),
+      ),
     );
   }
 }
@@ -502,7 +608,7 @@ class _PcsPill extends StatelessWidget {
           disabledColor: c.border,
           tooltip: tip,
           padding: EdgeInsets.zero,
-          constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+          constraints: const BoxConstraints.tightFor(width: 32, height: 32),
         );
     return Container(
       decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(999)),
@@ -511,7 +617,7 @@ class _PcsPill extends StatelessWidget {
         children: [
           side(Icons.remove_rounded, 'One piece less', onLess),
           SizedBox(
-            width: 24,
+            width: 28,
             child: Text(
               '$pcs',
               textAlign: TextAlign.center,
@@ -539,7 +645,7 @@ class _Problem extends StatelessWidget {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(D.space6),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             StatusCircle(icon: icon, color: c.warningTint, onColor: c.warning),

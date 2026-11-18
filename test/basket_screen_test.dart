@@ -80,7 +80,11 @@ void main() {
 
   setUp(() => api = FakeApi());
 
-  Future<void> open(WidgetTester tester, {bool ask = false, OrdersApi? orders}) => tester.pumpWidget(
+  Future<void> open(WidgetTester tester, {bool ask = false, OrdersApi? orders}) {
+    tester.view.physicalSize = const Size(1280, 800); // the tablet, landscape
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    return tester.pumpWidget(
     MaterialApp(
       theme: altaiTheme(Brightness.light),
       home: BasketScreen(
@@ -89,12 +93,12 @@ void main() {
         storeId: '12',
         storeName: 'MidValley',
         staffName: 'Aina',
-        onLogout: () {},
         askReceiptOnScan: ask,
         orders: orders,
       ),
     ),
   );
+  }
 
   Future<void> scan(WidgetTester tester, String epc) async {
     await scanWithReader(tester, reader, [epc]);
@@ -102,7 +106,7 @@ void main() {
   }
 
   Future<void> receipt(WidgetTester tester, String no) async {
-    await tester.enterText(textBox('StoreHub receipt no.'), no);
+    await tester.enterText(find.byKey(const ValueKey('receipt-field')), no);
     await tester.pump();
   }
 
@@ -116,7 +120,7 @@ void main() {
 
   testWidgets('scan, see the item, complete, next customer', (tester) async {
     await open(tester);
-    expect(find.text('No tags read yet.'), findsOneWidget);
+    expect(find.text('Put the items near the reader'), findsOneWidget);
 
     await scan(tester, 'E2801160000000A1');
     expect(find.text('Classic Tee'), findsWidgets);
@@ -135,7 +139,7 @@ void main() {
 
     await tester.tap(find.text('Next customer'));
     await tester.pumpAndSettle();
-    expect(find.text('No tags read yet.'), findsOneWidget);
+    expect(find.text('Put the items near the reader'), findsOneWidget);
   });
 
   testWidgets('no connection: says so, and Try again finishes the same basket', (tester) async {
@@ -192,7 +196,7 @@ void main() {
     expect(find.text("Tap Find to look up today's StoreHub sale ending in $end."), findsOneWidget);
     await tester.tap(find.text('Find'));
     await tester.pumpAndSettle();
-    expect(tester.widget<TextField>(textBox('StoreHub receipt no.')).controller!.text, full);
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('receipt-field'))).controller!.text, full);
     expect(find.text('Find'), findsNothing);
 
     // No sale today ends like this: says so, the box stays as typed.
@@ -200,6 +204,6 @@ void main() {
     await tester.tap(find.text('Find'));
     await tester.pumpAndSettle();
     expect(find.textContaining('No StoreHub sale today ending in 0000'), findsOneWidget);
-    expect(tester.widget<TextField>(textBox('StoreHub receipt no.')).controller!.text, '0000');
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('receipt-field'))).controller!.text, '0000');
   });
 }

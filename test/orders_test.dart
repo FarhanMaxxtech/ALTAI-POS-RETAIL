@@ -167,12 +167,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Two demo orders; the old one is flagged.
+      // Two demo orders, both waiting for their items; the old one's paid time is flagged.
       final older = orders.all[0].invoiceNumber, newer = orders.all[1].invoiceNumber;
       expect(older, matches(RegExp(r'^\d{16}$')));
       expect(find.text(older), findsOneWidget);
       expect(find.text(newer), findsOneWidget);
-      expect(find.text('Not scanned yet'), findsOneWidget);
+      expect(find.text('Not scanned yet'), findsNWidgets(2));
+      expect(find.text('Not scanned  2'), findsOneWidget);
       expect(find.textContaining('Demo orders'), findsOneWidget);
 
       await tester.tap(find.text(newer));
@@ -236,6 +237,6 @@ void main() {
     expect(find.text('Leave this order?'), findsOneWidget);
     await tester.tap(find.text('Leave'));
     await tester.pumpAndSettle();
-    expect(find.text('StoreHub orders'), findsOneWidget);
+    expect(find.text('Demo order'), findsOneWidget); // back on the orders list
   });
 }

@@ -62,7 +62,6 @@ void main() {
           storeId: '12',
           storeName: 'MidValley',
           staffName: 'Aina',
-          onLogout: () {},
           askReceiptOnScan: ask,
         ),
       ),
@@ -78,24 +77,23 @@ void main() {
     await open(tester, ask: false);
     await scan(tester, '$a $b $c');
 
-    // Nothing checked yet, but the cashier already sees 3 pieces and 3 grey rows.
-    expect(find.text('3'), findsOneWidget);
-    expect(find.text('pcs · checking 3…'), findsOneWidget);
+    // Nothing checked yet, but the cashier already sees 3 pieces and 3 grey cards.
+    expect(find.text('3 checking'), findsOneWidget);
     expect(find.text('Classic Tee'), findsNothing);
     expect(find.byKey(ValueKey('checking-$a')), findsOneWidget);
 
     // One tag answers: it shows straight away, without waiting for the other two.
     api.finish(b);
     await tester.pump();
-    expect(find.text('Classic Tee'), findsOneWidget);
+    await tester.pump();
+    expect(find.text('Classic Tee'), findsWidgets); // its card, and its line in the panel
     expect(find.byKey(ValueKey('checking-$b')), findsNothing);
-    expect(find.text('pcs · checking 2…'), findsOneWidget);
+    expect(find.text('3 · checking 2'), findsOneWidget);
 
     api.finish(a);
     api.finish(c);
     await tester.pumpAndSettle();
-    expect(find.text('pcs'), findsWidgets);
-    expect(find.text('3'), findsWidgets);
+    expect(find.text('3'), findsWidgets); // Pieces: 3, all checked
     expect(tester.takeException(), isNull);
   });
 
@@ -117,8 +115,8 @@ void main() {
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
     expect(find.text('Receipt no. from the iPad'), findsNothing);
-    expect(tester.widget<TextField>(textBox('StoreHub receipt no.')).controller!.text, '0022607201446208');
-    expect(find.text('Confirm & submit'), findsOneWidget);
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('receipt-field'))).controller!.text, '0022607201446208');
+    expect(find.text('Confirm'), findsOneWidget);
   });
 
   testWidgets('Later closes it, and it doesn\'t come back for the same basket', (tester) async {

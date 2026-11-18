@@ -26,14 +26,13 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Finder field(String label) => find.widgetWithText(TextField, label);
-
-  testWidgets('the receipt box is on top, the reader line under it, no Scan button, no EPC box', (tester) async {
+  testWidgets('reads at once: the reasons, the receipt box, no Scan button, no EPC box', (tester) async {
     await open(tester);
-    final receipt = tester.getRect(field('StoreHub receipt no., order no. or ID'));
-    final reader = tester.getRect(find.textContaining('put them near the reader'));
-    expect(receipt.top, lessThan(reader.top));
+    expect(find.text('Wrong size'), findsOneWidget); // the reasons are the chips over the cards
+    expect(find.textContaining('put them near the reader'), findsOneWidget);
+    expect(find.byKey(const ValueKey('receipt-field')), findsOneWidget);
     expect(find.widgetWithText(AltaiButton, 'Scan'), findsNothing);
-    expect(find.byType(TextField), findsOneWidget); // only the receipt box
+    // Only the receipt box and the top bar's search: no box to type tags into.
+    expect(find.byType(TextField), findsNWidgets(2));
   });
 }

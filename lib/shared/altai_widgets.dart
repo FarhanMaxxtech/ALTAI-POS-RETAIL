@@ -46,6 +46,33 @@ class AltaiLogo extends StatelessWidget {
 
 /* ---------------- App bar ---------------- */
 
+/// The green square with the white Altai mark.
+class LogoTile extends StatelessWidget {
+  const LogoTile({super.key, this.size = 40});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.altai;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(size / 4),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [c.logoGreenTop, c.logoGreenBottom],
+        ),
+      ),
+      alignment: Alignment.center,
+      child: AltaiLogo(height: size * 0.6),
+    );
+  }
+}
+
+
 /// Green gradient bar with the Altai mark, a title and an optional subtitle.
 class AltaiAppBar extends StatelessWidget implements PreferredSizeWidget {
   const AltaiAppBar({
@@ -65,19 +92,17 @@ class AltaiAppBar extends StatelessWidget implements PreferredSizeWidget {
   final List<Widget> actions;
 
   @override
-  Size get preferredSize => const Size.fromHeight(D.touchLg);
+  Size get preferredSize => const Size.fromHeight(76);
 
   @override
   Widget build(BuildContext context) {
     final c = context.altai;
     final sub = (subtitle?.isEmpty ?? true) ? null : subtitle;
     return Container(
+      // White, like the top bar of the main screens (the Figma redesign).
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [c.logoGreenTop, c.logoGreenBottom],
-        ),
+        color: c.surfaceRaised,
+        border: Border(bottom: BorderSide(color: c.border)),
       ),
       // Only keep clear of the status bar at the top. Left/right padding pushed the
       // icons towards the middle when the app runs in a window.
@@ -86,7 +111,7 @@ class AltaiAppBar extends StatelessWidget implements PreferredSizeWidget {
         right: false,
         bottom: false,
         child: SizedBox(
-          height: D.touchLg,
+          height: 76,
           child: Row(
             children: [
               const SizedBox(width: D.space3),
@@ -98,11 +123,11 @@ class AltaiAppBar extends StatelessWidget implements PreferredSizeWidget {
                 )
               else
                 const SizedBox(width: D.space3),
-              const AltaiLogo(height: 36),
-              const SizedBox(width: D.space4),
+              const LogoTile(),
+              const SizedBox(width: 12),
               Text(
                 title,
-                style: AltaiType.title.copyWith(color: c.onLogoGreen),
+                style: AltaiType.title.copyWith(fontWeight: FontWeight.w700, color: c.ink),
                 maxLines: 1,
               ),
               if (sub != null) ...[
@@ -126,7 +151,7 @@ class AltaiAppBar extends StatelessWidget implements PreferredSizeWidget {
                                 sub,
                                 style: AltaiType.body.copyWith(
                                   fontSize: AltaiType.label.fontSize,
-                                  color: c.onLogoGreen.withValues(alpha: 0.92),
+                                  color: c.inkMuted,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -136,7 +161,7 @@ class AltaiAppBar extends StatelessWidget implements PreferredSizeWidget {
                               Icon(
                                 Icons.expand_more_rounded,
                                 size: 22,
-                                color: c.onLogoGreen.withValues(alpha: 0.92),
+                                color: c.inkMuted,
                               ),
                           ],
                         ),
@@ -173,8 +198,8 @@ class AppBarIcon extends StatelessWidget {
   Widget build(BuildContext context) => IconButton(
     onPressed: onPressed,
     tooltip: tooltip,
-    iconSize: 28,
-    color: context.altai.onLogoGreen,
+    iconSize: 26,
+    color: context.altai.ink,
     icon: Icon(icon),
   );
 }
@@ -190,7 +215,7 @@ class AppBarText extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: D.space2),
     child: Text(
       text,
-      style: AltaiType.label.copyWith(color: context.altai.onLogoGreen),
+      style: AltaiType.label.copyWith(color: context.altai.inkMuted),
     ),
   );
 }
@@ -228,7 +253,7 @@ class AltaiButton extends StatelessWidget {
       AltaiButtonVariant.secondary => (
         c.surfaceRaised,
         c.ink,
-        BorderSide(color: c.borderStrong, width: 1.5),
+        BorderSide(color: c.border, width: 1.5),
       ),
       AltaiButtonVariant.ghost => (
         Colors.transparent,

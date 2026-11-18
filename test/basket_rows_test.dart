@@ -97,7 +97,6 @@ void main() {
           storeId: '12',
           storeName: 'MidValley',
           staffName: 'Aina',
-          onLogout: () {},
         ),
       ),
     );
@@ -111,7 +110,7 @@ void main() {
       for (var i = 0; i < 120; i++) epc('C0', i), // a big quantity and a big total
     ];
     await tester.enterText(
-      find.byWidgetPredicate((w) => w is TextField && w.decoration?.labelText == 'StoreHub receipt no.'),
+      find.byKey(const ValueKey('receipt-field')),
       '0022607201446208',
     );
     await scanWithReader(tester, reader, tags);
@@ -121,7 +120,7 @@ void main() {
   testWidgets('Confirm & submit stays above Android\'s navigation bar', (tester) async {
     await open(tester, const Size(1280, 800), 1.0, navBar: 48);
     await scanAll(tester);
-    final button = tester.getRect(find.text('Confirm & submit'));
+    final button = tester.getRect(find.text('Confirm'));
     expect(button.bottom, lessThanOrEqualTo(800 - 48));
     expect(tester.takeException(), isNull);
   });
@@ -131,41 +130,45 @@ void main() {
     ('portrait', const Size(800, 1280), 1.0),
     ('landscape, big text', const Size(1280, 800), 1.3), // the tablet's font size turned up
   ]) {
-    testWidgets('one row per product, variants in the dropdown, nothing overflows ($name)', (tester) async {
+    testWidgets('one card per colour/size, a line each in the panel, nothing overflows ($name)', (tester) async {
       await open(tester, size, textScale);
       await scanAll(tester);
 
-      // Classic Tee: one row for both sizes.
-      expect(find.text('Classic Tee'), findsOneWidget);
-      // The SKU sits under the name; a product in two sizes lists both.
-      expect(find.text('SKU JN-32'), findsOneWidget);
-      expect(find.text('SKU CT-BLK-L, CT-BLK-M'), findsOneWidget);
-      expect(find.text('RM 199.60'), findsOneWidget); // 4 × 49.90
+      Finder inCard(String sku, String text) =>
+          find.descendant(of: find.byKey(ValueKey('card-$sku')), matching: find.text(text));
+      Finder inLine(String sku, String text) =>
+          find.descendant(of: find.byKey(ValueKey('line-$sku')), matching: find.text(text));
+
+      // Classic Tee in two sizes: two cards, each with its own count and the price of one.
+      expect(inCard('CT-BLK-M', 'Classic Tee'), findsOneWidget);
+      expect(inCard('CT-BLK-M', 'Black / M'), findsOneWidget);
+      expect(inCard('CT-BLK-M', '× 3'), findsOneWidget);
+      expect(inCard('CT-BLK-M', 'RM 49.90'), findsOneWidget);
+      expect(inCard('CT-BLK-L', '× 2'), findsOneWidget);
+      expect(inCard('JN-32', '× 4'), findsOneWidget);
+      // The order panel: the line totals, with big amounts grouped.
+      if (size.width > size.height) expect(inLine('CT-BLK-M', '149.70'), findsOneWidget); // 3 × 49.90
+      expect(inLine('LX-GRN-XXL', '1,499,880.00'), findsOneWidget); // 120 × 12,499.00
+      expect(inLine('LX-GRN-XXL', '120'), findsOneWidget);
+
+      // Tap a card: its details, and a way to remove it.
+      await tester.tap(find.byKey(const ValueKey('card-CT-BLK-L')));
+      await tester.pumpAndSettle();
+      expect(find.text('CT-BLK-L'), findsOneWidget);
       expect(find.text('RM 49.90 each'), findsOneWidget);
-
-      await tester.tap(find.text('Classic Tee'));
+      expect(find.text('RM 99.80'), findsOneWidget);
+      await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
-      expect(find.text('Black / M'), findsOneWidget);
-      expect(find.text('SKU CT-BLK-M'), findsNothing); // no SKU in the dropdown
-      expect(find.text('× 3'), findsOneWidget);
-      expect(find.text('Black / L'), findsOneWidget);
-      expect(find.text('× 2'), findsOneWidget);
 
-      expect(find.byTooltip('Remove one piece'), findsNothing); // no minus button in the dropdown
-
-      // Open every row so the list is long: it scrolls rather than overflows.
-      await tester.tap(find.text('Slim Jeans'));
-      await tester.tap(find.textContaining('Limited edition'));
-      await tester.pumpAndSettle();
-      await tester.drag(find.byType(ListView).first, const Offset(0, -600));
+      // A long list of cards scrolls rather than overflows.
+      await tester.drag(find.byType(GridView), const Offset(0, -600));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
 
       // The last look and the done screen fit too.
-      await tester.tap(find.textContaining('Confirm'));
+      await tester.tap(find.text('Confirm'));
       await tester.pumpAndSettle();
-      expect(find.text('SKU CT-BLK-L'), findsOneWidget);
-      expect(find.text('Black / L'), findsWidgets);
+      expect(find.text('Black / L · SKU CT-BLK-L · RM 49.90 each'), findsOneWidget);
       await tester.tap(find.text('Submit'));
       await tester.pumpAndSettle();
       expect(find.text('Good to go'), findsOneWidget);
@@ -177,13 +180,13 @@ void main() {
     // The tablet (SM-X610) in landscape: 2560 × 1600 px at 2.125 = 1205 × 753, less Android's bars.
     await open(tester, const Size(1205, 753), 1.0, navBar: 48);
     await tester.enterText(
-      find.byWidgetPredicate((w) => w is TextField && w.decoration?.labelText == 'StoreHub receipt no.'),
+      find.byKey(const ValueKey('receipt-field')),
       '0022607201446208',
     );
     await scanWithReader(tester, reader, [for (var i = 10; i < 22; i++) epc('D$i', 0)]); // 12 SKUs
     await tester.pumpAndSettle();
 
-    await tester.tap(find.textContaining('Confirm'));
+    await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();
     // The last look: only its item list scrolls; the buttons stay in view.
     expect(find.byKey(const ValueKey('confirm-items')), findsOneWidget);

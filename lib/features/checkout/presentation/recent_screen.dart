@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
-import '../../../shared/keyboard.dart';
+import '../../../shared/pos_layout.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../data/checkout_api.dart';
 import '../domain/checkout_summary.dart';
@@ -14,12 +14,15 @@ enum RecentRange { today, yesterday, week, custom }
 /// The checkouts recorded in this store, newest first, with filters: days, cashier, transaction no.
 /// Pull down to refresh. Tap one to see the items in it.
 class RecentScreen extends StatefulWidget {
-  const RecentScreen({super.key, required this.api, required this.storeId, this.storeName, this.catalog});
+  const RecentScreen({super.key, required this.api, required this.storeId, this.storeName, this.catalog, this.initialSearch});
 
   final CheckoutApi api;
   final String storeId;
   final String? storeName;
   final CatalogApi? catalog; // pictures on the details screen
+
+  /// Typed in the start page's search box.
+  final String? initialSearch;
 
   @override
   State<RecentScreen> createState() => _RecentScreenState();
@@ -29,7 +32,7 @@ class _RecentScreenState extends State<RecentScreen> {
   RecentRange _range = RecentRange.today;
   DateTimeRange? _custom; // when _range is custom
   String? _cashier; // null = everyone
-  String _search = '';
+  late String _search = widget.initialSearch ?? '';
   late Future<List<CheckoutSummary>> _future = _fetch();
 
   static DateTime _dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
@@ -86,9 +89,7 @@ class _RecentScreenState extends State<RecentScreen> {
 
   void _open(CheckoutSummary checkout) {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CheckoutDetailScreen(api: widget.api, checkout: checkout, catalog: widget.catalog),
-      ),
+      shellRoute<void>(context, CheckoutDetailScreen(api: widget.api, checkout: checkout, catalog: widget.catalog)),
     );
   }
 
@@ -103,21 +104,21 @@ class _RecentScreenState extends State<RecentScreen> {
     return [
       for (final x in all)
         if ((_cashier == null || x.cashier == _cashier) &&
-            (q.isEmpty || (x.trxId ?? '').toLowerCase().contains(q) || (x.remark ?? '').toLowerCase().contains(q)))
+            (q.isEmpty ||
+                (x.trxId ?? '').toLowerCase().contains(q) ||
+                (x.receipt ?? '').toLowerCase().contains(q) ||
+                (x.remark ?? '').toLowerCase().contains(q)))
           x,
     ];
   }
 
   @override
   Widget build(BuildContext context) {
-    final c = context.altai;
-    return Scaffold(
-      appBar: AltaiAppBar(
-        title: 'Recent checkouts',
-        subtitle: widget.storeName,
-        onBack: () => Navigator.of(context).pop(),
-        actions: [AppBarIcon(Icons.refresh_rounded, tooltip: 'Refresh', onPressed: _reload)],
-      ),
+    return AppShell(
+      section: Section.recent,
+      searchHint: 'Search transaction or receipt no.…',
+      onSearch: (v) => setState(() => _search = v),
+      onRefresh: _reload,
       body: FutureBuilder(
         future: _future,
         builder: (context, snap) {
@@ -125,20 +126,22 @@ class _RecentScreenState extends State<RecentScreen> {
           final all = snap.data ?? const <CheckoutSummary>[];
           final cashiers = {for (final x in all) ?x.cashier}.toList()..sort();
           final list = _filtered(all);
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 900),
-              child: Column(
-                children: [
-                  _filters(
-                    context,
-                    cashiers,
-                    loading || snap.hasError ? null : '${plural(list.length, 'checkout')} shown',
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _filters(context, cashiers),
+                const SizedBox(height: 12),
+                if (!loading && !snap.hasError) ...[
+                  Text(
+                    '${plural(list.length, 'checkout')} shown',
+                    style: AltaiType.caption.copyWith(fontWeight: FontWeight.w500, color: context.altai.inkMuted),
                   ),
-                  Divider(height: 1, color: c.border),
-                  Expanded(child: _body(context, snap, list, loading)),
+                  const SizedBox(height: 8),
                 ],
-              ),
+                Expanded(child: _body(context, snap, list, loading)),
+              ],
             ),
           );
         },
@@ -146,75 +149,33 @@ class _RecentScreenState extends State<RecentScreen> {
     );
   }
 
-  Widget _filters(BuildContext context, List<String> cashiers, String? count) {
+  Widget _filters(BuildContext context, List<String> cashiers) {
     final c = context.altai;
-    ChoiceChip chip(String label, RecentRange r) => ChoiceChip(
-      label: Text(label, style: AltaiType.label),
-      selected: _range == r,
-      onSelected: (_) => _pickRange(r),
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(D.space6, D.space4, D.space6, D.space4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Wrap(
-            spacing: D.space2,
-            runSpacing: D.space2,
-            children: [
-              chip('Today', RecentRange.today),
-              chip('Yesterday', RecentRange.yesterday),
-              chip('Last 7 days', RecentRange.week),
-              ChoiceChip(
-                avatar: const Icon(Icons.date_range_rounded, size: 18),
-                label: Text(_range == RecentRange.custom ? _customLabel() : 'Pick dates', style: AltaiType.label),
-                selected: _range == RecentRange.custom,
-                onSelected: (_) => _pickRange(RecentRange.custom),
-              ),
-            ],
-          ),
-          const SizedBox(height: D.space3),
-          Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: TextField(
-                  onTap: showKeyboard,
-                  style: AltaiType.body.copyWith(color: c.ink),
-                  decoration: const InputDecoration(
-                    hintText: 'Search transaction or receipt no.',
-                    prefixIcon: Icon(Icons.search_rounded),
-                    isDense: true,
-                  ),
-                  onChanged: (v) => setState(() => _search = v),
-                ),
-              ),
-              const SizedBox(width: D.space3),
-              Expanded(
-                flex: 2,
-                child: DropdownButtonFormField<String?>(
-                  key: ValueKey(cashiers.join('|')), // a new list of cashiers starts from "All cashiers"
-                  initialValue: cashiers.contains(_cashier) ? _cashier : null,
-                  isExpanded: true,
-                  decoration: const InputDecoration(prefixIcon: Icon(Icons.person_outline_rounded), isDense: true),
-                  items: [
-                    DropdownMenuItem<String?>(value: null, child: Text('All cashiers', style: AltaiType.body)),
-                    for (final name in cashiers)
-                      DropdownMenuItem<String?>(
-                        value: name,
-                        child: Text(name, style: AltaiType.body),
-                      ),
-                  ],
-                  onChanged: (v) => setState(() => _cashier = v),
-                ),
-              ),
-            ],
-          ),
-          if (count != null) ...[
-            const SizedBox(height: D.space2),
-            Text(count, style: AltaiType.caption.copyWith(color: c.inkMuted)),
-          ],
+    FilterChoice chip(String label, RecentRange r) =>
+        FilterChoice(label, selected: _range == r, onTap: () => _pickRange(r));
+    return FilterBar(
+      chips: [
+        chip('Today', RecentRange.today),
+        chip('Yesterday', RecentRange.yesterday),
+        chip('Last 7 days', RecentRange.week),
+        chip(_range == RecentRange.custom ? _customLabel() : 'Pick dates', RecentRange.custom),
+      ],
+      trailing: PopupMenuButton<String>(
+        key: ValueKey(cashiers.join('|')),
+        tooltip: 'Cashier',
+        onSelected: (v) => setState(() => _cashier = v.isEmpty ? null : v),
+        itemBuilder: (context) => [
+          PopupMenuItem<String>(value: '', child: Text('All cashiers', style: AltaiType.body)),
+          for (final name in cashiers) PopupMenuItem<String>(value: name, child: Text(name, style: AltaiType.body)),
         ],
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_cashier ?? 'All cashiers',
+                style: AltaiType.caption.copyWith(fontWeight: FontWeight.w500, color: c.inkMuted)),
+            Icon(Icons.arrow_drop_down_rounded, color: c.inkMuted),
+          ],
+        ),
       ),
     );
   }
@@ -262,21 +223,38 @@ class _RecentScreenState extends State<RecentScreen> {
     }
     return RefreshIndicator(
       onRefresh: _reload,
-      child: ListView.separated(
-        padding: const EdgeInsets.all(D.space6),
-        itemCount: list.length,
-        separatorBuilder: (_, _) => const SizedBox(height: D.space3),
-        itemBuilder: (context, i) => _CheckoutRow(list[i], onTap: () => _open(list[i])),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.only(bottom: 24),
+        child: TableCard(
+          header: const Row(
+            children: [
+              SizedBox(width: _timeCol, child: ColumnTitle('Time')),
+              SizedBox(width: _trxCol, child: ColumnTitle('Transaction')),
+              Expanded(child: ColumnTitle('Receipt')),
+              SizedBox(width: _cashierCol, child: ColumnTitle('Cashier')),
+              SizedBox(width: _statusCol + _chevCol, child: ColumnTitle('Status')),
+            ],
+          ),
+          rows: [for (final x in list) _CheckoutRow(x, onTap: () => _open(x), showDate: _range != RecentRange.today)],
+        ),
       ),
     );
   }
 }
 
+const _timeCol = 126.0;
+const _trxCol = 160.0;
+const _cashierCol = 120.0;
+const _statusCol = 130.0;
+const _chevCol = 32.0;
+
 class _CheckoutRow extends StatelessWidget {
-  const _CheckoutRow(this.checkout, {required this.onTap});
+  const _CheckoutRow(this.checkout, {required this.onTap, required this.showDate});
 
   final CheckoutSummary checkout;
   final VoidCallback onTap;
+  final bool showDate;
 
   @override
   Widget build(BuildContext context) {
@@ -285,67 +263,65 @@ class _CheckoutRow extends StatelessWidget {
     String two(int n) => n.toString().padLeft(2, '0'); // 5 → "05"
     final hasTime = checkout.hasTime; // older sales and sales made elsewhere only have a date
     final trx = checkout.trxId;
-    // "Aina · Receipt SH-0012", or the whole remark for sales made outside this app.
-    final details = [
-      ?checkout.cashier,
+    final date = '${two(t.day)}/${two(t.month)}/${t.year}';
+    final receipt = [
       if (checkout.receipt case final r?) 'Receipt $r',
       if (checkout.noReceiptReason case final r?) 'No receipt: $r',
       if (checkout.exchangeFor case final r?) 'Exchange for $r',
     ].join(' · ');
-    return Material(
-      color: c.surfaceRaised,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(D.radiusMd),
-        side: BorderSide(color: c.border),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: D.space6, vertical: D.space4),
-          child: Row(
-            children: [
-              // Time, big, so staff can find "the one from 2:15".
-              SizedBox(
-                width: 150,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (hasTime)
-                      Text(
-                        '${two(t.hour)}:${two(t.minute)}:${two(t.second)}',
-                        style: AltaiType.qty.copyWith(fontSize: 26, color: c.ink),
-                      ),
-                    Text(
-                      '${two(t.day)}/${two(t.month)}/${t.year}',
-                      style: hasTime
-                          ? AltaiType.caption.copyWith(color: c.inkMuted)
-                          : AltaiType.label.copyWith(color: c.ink),
-                    ),
-                  ],
-                ),
+    final other = checkout.cashier == null ? (checkout.remark ?? '') : '';
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 68),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        child: Row(
+          children: [
+            // Time, big, so staff can find "the one from 2:15".
+            SizedBox(
+              width: _timeCol,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    hasTime ? '${two(t.hour)}:${two(t.minute)}:${two(t.second)}' : date,
+                    style: AltaiType.heading.copyWith(fontWeight: FontWeight.w700, color: c.ink),
+                  ),
+                  if (hasTime && showDate) Text(date, style: AltaiType.caption.copyWith(fontSize: 12, color: c.inkMuted)),
+                ],
               ),
-              const SizedBox(width: D.space4),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      trx == null ? 'Transaction' : 'Transaction $trx',
-                      style: AltaiType.label.copyWith(color: c.ink),
-                    ),
-                    if (details.isNotEmpty)
-                      Text(details, style: AltaiType.caption.copyWith(color: c.inkMuted))
-                    else if (checkout.remark != null && checkout.remark!.isNotEmpty)
-                      Text(checkout.remark!, style: AltaiType.caption.copyWith(color: c.inkMuted)),
-                  ],
-                ),
+            ),
+            SizedBox(
+              width: _trxCol,
+              child: Text(
+                trx == null ? 'Transaction' : 'Transaction $trx',
+                style: AltaiType.label.copyWith(fontSize: 16, fontWeight: FontWeight.w600, color: c.ink),
               ),
-              const AltaiBadge('Recorded', tone: BadgeTone.brand, icon: Icons.check_circle_rounded),
-              const SizedBox(width: D.space2),
-              Icon(Icons.chevron_right_rounded, size: 28, color: c.inkMuted),
-            ],
-          ),
+            ),
+            Expanded(
+              child: Text(
+                receipt.isNotEmpty ? receipt : other,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: AltaiType.label.copyWith(fontWeight: FontWeight.w400, color: c.ink),
+              ),
+            ),
+            SizedBox(
+              width: _cashierCol,
+              child: Text(checkout.cashier ?? '–',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AltaiType.label.copyWith(fontWeight: FontWeight.w400, color: c.inkMuted)),
+            ),
+            const SizedBox(
+              width: _statusCol,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: StatusPill('Recorded', icon: Icons.check_circle_rounded),
+              ),
+            ),
+            SizedBox(width: _chevCol, child: Icon(Icons.chevron_right_rounded, size: 26, color: c.inkMuted)),
+          ],
         ),
       ),
     );

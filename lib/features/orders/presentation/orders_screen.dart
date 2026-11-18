@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
+import '../../../shared/pos_layout.dart';
 import '../../../shared/rfid_reader.dart';
 import '../../checkout/presentation/scan_page.dart';
 import '../../checkout/data/checkout_api.dart';
@@ -43,6 +44,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   List<StoreHubOrder>? _list;
   String? _error;
   Timer? _timer;
+  DateTime? _loadedAt; // "Updated just now"
+  String _query = '';
+  _Tab _tab = _Tab.waiting;
 
   @override
   void initState() {
@@ -64,6 +68,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       setState(() {
         _list = list;
         _error = null;
+        _loadedAt = DateTime.now();
       });
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not load the orders. Check the connection.');
@@ -73,8 +78,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Future<void> _open(StoreHubOrder order) async {
     _timer?.cancel();
     await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => OrderScanScreen(
+      shellRoute(
+        context,
+        OrderScanScreen(
           order: order,
           inspector: widget.inspector,
           orders: widget.orders,
@@ -105,62 +111,78 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.altai;
-    final list = _list;
+    final pending = _list;
     final now = DateTime.now();
-    return Scaffold(
-      appBar: AltaiAppBar(
-        title: 'StoreHub orders',
-        subtitle: widget.storeName,
-        onBack: () => Navigator.of(context).pop(),
-        actions: [AppBarIcon(Icons.refresh_rounded, tooltip: 'Refresh', onPressed: _load)],
-      ),
+    final fake = widget.orders is FakeOrdersApi ? widget.orders as FakeOrdersApi : null;
+    final scanned = fake == null
+        ? const <StoreHubOrder>[]
+        : fake.all.where((o) => o.storeId == widget.storeId && o.status == OrderStatus.completed).toList();
+    final q = _query.trim();
+    bool hit(StoreHubOrder o) => q.isEmpty || o.invoiceNumber.contains(q);
+    final shown = switch (_tab) {
+      _Tab.waiting => [...?pending],
+      _Tab.scanned => scanned,
+      _Tab.all => [...?pending, ...scanned],
+    }.where(hit).toList()
+      ..sort((a, b) => b.paidAt.compareTo(a.paidAt)); // newest at the top: usually the customer at the counter
+    final loaded = _loadedAt;
+    return AppShell(
+      section: Section.orders,
+      searchHint: 'Search receipt no.…',
+      onSearch: (v) => setState(() => _query = v),
+      onRefresh: _load,
+      action: fake == null ? null : ShellAction('Demo order', Icons.add_rounded, () => _demoFromTags(fake)),
       body: Padding(
-        padding: const EdgeInsets.all(D.space4),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (widget.orders case final FakeOrdersApi fake) ...[
-              Container(
-                padding: const EdgeInsets.fromLTRB(D.space3, D.space2, D.space2, D.space2),
-                decoration: BoxDecoration(color: c.warningTint, borderRadius: BorderRadius.circular(D.radiusMd)),
-                child: Row(
-                  children: [
-                    Icon(Icons.science_outlined, color: c.warning),
-                    const SizedBox(width: D.space3),
-                    Expanded(
-                      child: Text(
-                        'Demo orders: the Altai server doesn\'t send StoreHub orders yet. Nothing here changes stock.',
-                        style: AltaiType.caption.copyWith(color: c.ink),
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => _demoFromTags(fake),
-                      icon: const Icon(Icons.add_rounded),
-                      label: const Text('Demo order from tags'),
-                    ),
-                  ],
-                ),
+            FilterBar(
+              chips: [
+                FilterChoice('Not scanned  ${pending?.length ?? 0}',
+                    selected: _tab == _Tab.waiting, onTap: () => setState(() => _tab = _Tab.waiting)),
+                FilterChoice('Scanned  ${scanned.length}',
+                    selected: _tab == _Tab.scanned, onTap: () => setState(() => _tab = _Tab.scanned)),
+                FilterChoice('All  ${(pending?.length ?? 0) + scanned.length}',
+                    selected: _tab == _Tab.all, onTap: () => setState(() => _tab = _Tab.all)),
+              ],
+              trailing: loaded == null ? null : BarNote('Updated ${ageText(loaded, now)}'),
+            ),
+            if (fake != null) ...[
+              const SizedBox(height: 12),
+              const PageNotice(
+                'Demo orders: the Altai server doesn\'t send StoreHub orders yet. Nothing here changes stock.',
+                icon: Icons.science_outlined,
               ),
-              const SizedBox(height: D.space3),
             ],
-            if (_error case final e?) ...[AltaiNotice(e, warning: true), const SizedBox(height: D.space3)],
+            if (_error case final e?) ...[const SizedBox(height: 12), PageNotice(e)],
+            const SizedBox(height: 12),
             Expanded(
-              child: list == null
+              child: pending == null
                   ? const Center(child: CircularProgressIndicator())
-                  : list.isEmpty
+                  : shown.isEmpty
                   ? Center(
                       child: Text(
-                        'No orders waiting. New StoreHub sales show up here.',
+                        _tab == _Tab.scanned ? 'No scanned orders yet.' : 'No orders waiting. New StoreHub sales show up here.',
                         style: AltaiType.body.copyWith(color: c.inkMuted),
                       ),
                     )
                   : RefreshIndicator(
                       onRefresh: _load,
-                      child: ListView.separated(
-                        itemCount: list.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: D.space2),
-                        // Newest at the top: that's usually the customer at the counter.
-                        itemBuilder: (context, i) => _row(context, list[list.length - 1 - i], now),
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.only(bottom: 24),
+                        child: TableCard(
+                          header: const Row(
+                            children: [
+                              SizedBox(width: _receiptCol, child: ColumnTitle('Receipt no.')),
+                              Expanded(child: ColumnTitle('Items')),
+                              SizedBox(width: _paidCol, child: ColumnTitle('Paid')),
+                              SizedBox(width: _statusCol + _chevCol, child: ColumnTitle('Status')),
+                            ],
+                          ),
+                          rows: [for (final o in shown) _row(context, o, now)],
+                        ),
                       ),
                     ),
             ),
@@ -172,61 +194,60 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   Widget _row(BuildContext context, StoreHubOrder o, DateTime now) {
     final c = context.altai;
-    final late = o.isLate(now);
+    final done = o.status == OrderStatus.completed;
+    final late = !done && o.isLate(now);
     final names = {for (final l in o.lines) l.name}.join(', ');
-    return Material(
-      color: c.surfaceRaised,
-      borderRadius: BorderRadius.circular(D.radiusMd),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(D.radiusMd),
-        onTap: () => _open(o),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: D.space4, vertical: D.space3),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(D.radiusMd),
-            border: Border.all(color: late ? c.warning : c.border),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.receipt_long_rounded, color: c.brandInk),
-              const SizedBox(width: D.space3),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(o.invoiceNumber, style: AltaiType.bodyStrong.copyWith(color: c.ink)),
-                    Text(
-                      '${plural(o.totalQty, 'pc')} · $names',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AltaiType.caption.copyWith(color: c.inkMuted),
-                    ),
-                  ],
-                ),
+    final age = ageText(o.paidAt, now);
+    return InkWell(
+      onTap: done ? null : () => _open(o),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 72),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: _receiptCol,
+              child: Text(o.invoiceNumber,
+                  style: AltaiType.label.copyWith(fontSize: 16, fontWeight: FontWeight.w600, color: c.ink)),
+            ),
+            Expanded(
+              child: Text(
+                '${plural(o.totalQty, 'pc')} · $names',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AltaiType.label.copyWith(fontWeight: FontWeight.w400, color: c.ink),
               ),
-              const SizedBox(width: D.space3),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    'Paid ${ageText(o.paidAt, now)}',
-                    style: AltaiType.caption.copyWith(color: late ? c.warning : c.inkMuted),
-                  ),
-                  const SizedBox(height: D.space1),
-                  late
-                      ? const AltaiBadge('Not scanned yet', tone: BadgeTone.warning, icon: Icons.schedule_rounded)
-                      : AltaiBadge(o.status.label, tone: BadgeTone.brand),
-                ],
+            ),
+            SizedBox(
+              width: _paidCol,
+              child: Text(
+                age[0].toUpperCase() + age.substring(1),
+                style: AltaiType.label.copyWith(color: late ? c.warning : c.inkMuted),
               ),
-              const SizedBox(width: D.space2),
-              Icon(Icons.chevron_right_rounded, color: c.inkMuted),
-            ],
-          ),
+            ),
+            SizedBox(
+              width: _statusCol,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: done
+                    ? const StatusPill('Scanned', icon: Icons.check_circle_rounded)
+                    : const StatusPill('Not scanned yet', icon: Icons.schedule_rounded),
+              ),
+            ),
+            SizedBox(width: _chevCol, child: done ? null : Icon(Icons.chevron_right_rounded, size: 26, color: c.inkMuted)),
+          ],
         ),
       ),
     );
   }
 }
+
+enum _Tab { waiting, scanned, all }
+
+const _receiptCol = 236.0;
+const _paidCol = 150.0;
+const _statusCol = 170.0;
+const _chevCol = 32.0;
 
 /// Demo only: read some real tags and make an order of them, to try the matching with real items.
 class _DemoOrderDialog extends StatefulWidget {

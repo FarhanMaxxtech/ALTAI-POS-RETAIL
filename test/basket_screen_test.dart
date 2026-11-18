@@ -196,8 +196,15 @@ void main() {
     expect(find.text("Tap Find to look up today's StoreHub sale ending in $end."), findsOneWidget);
     await tester.tap(find.text('Find'));
     await tester.pumpAndSettle();
-    expect(tester.widget<TextField>(find.byKey(const ValueKey('receipt-field'))).controller!.text, full);
+    // The checkout is now for that order: every item on it shows, each with its progress.
+    expect(find.text('Order $full'), findsOneWidget);
+    expect(find.text('0 / 1'), findsNWidgets(2));
     expect(find.text('Find'), findsNothing);
+
+    // Change: back to a free checkout, with the receipt box.
+    await tester.tap(find.text('Change'));
+    await tester.pumpAndSettle();
+    expect(find.text('Order $full'), findsNothing);
 
     // No sale today ends like this: says so, the box stays as typed.
     await receipt(tester, '0000');

@@ -9,6 +9,7 @@ import 'basket.dart';
 import 'receipt_no.dart';
 import 'checkout_summary.dart';
 import '../../catalog/data/catalog_api.dart';
+import '../../orders/domain/order.dart';
 import '../../returns/domain/exchange.dart';
 import '../../../shared/reading_time.dart';
 
@@ -154,7 +155,7 @@ class BasketController extends ChangeNotifier {
 
   /// Is the typed receipt no. a StoreHub one? See [checkReceiptNo].
   ({String? error, String? warning}) get receiptCheck {
-    if (noReceiptReason != null) return (error: null, warning: null);
+    if (noReceiptReason != null || _order != null) return (error: null, warning: null);
     if (receiptEnding case final end?) {
       return (error: "Tap Find to look up today's StoreHub sale ending in $end.", warning: null);
     }
@@ -173,12 +174,79 @@ class BasketController extends ChangeNotifier {
   bool get isChecking => _items.values.any((i) => i.state == ItemState.checking);
   bool get hasProblems => _items.values.any((i) => i.state == ItemState.problem);
   bool get canComplete =>
-      phase == BasketPhase.scanning && _items.isNotEmpty && !isChecking && !hasProblems && hasReceipt;
+      phase == BasketPhase.scanning &&
+      _items.isNotEmpty &&
+      !isChecking &&
+      !hasProblems &&
+      hasReceipt &&
+      (_order == null || orderLeft == 0);
+
+  /* ---------------- Checkout of a StoreHub order ---------------- */
+
+  /// The paid StoreHub order these items are for (picked in Orders, or found by its last 4 digits).
+  /// Each tag is checked against it, and Confirm waits until every item on it is scanned.
+  StoreHubOrder? get order => _order;
+  StoreHubOrder? _order;
+
+  /// Checks out [o] from now on (null = a free checkout). Its receipt no. is used, and the items
+  /// already read are checked again against it.
+  void useOrder(StoreHubOrder? o) {
+    if (phase != BasketPhase.scanning) return;
+    _order = o;
+    if (o != null) {
+      receiptNo = o.invoiceNumber;
+      noReceiptReason = null;
+    }
+    _cancelProblemTimers();
+    for (final i in _items.values.toList()) {
+      _items[i.epc] = BasketItem(i.epc);
+    }
+    if (_items.isNotEmpty) _scheduleCheck();
+    notifyListeners();
+  }
+
+  /// Ready pieces of each SKU.
+  Map<String, int> get scannedBySku {
+    final out = <String, int>{};
+    for (final i in _items.values) {
+      if (i.state == ItemState.ok && i.sku != null) out[i.sku!] = (out[i.sku!] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  /// Pieces of the order still to scan (lines with no tag, like a paper bag, don't count).
+  int get orderLeft {
+    final o = _order;
+    if (o == null) return 0;
+    final scanned = scannedBySku;
+    return o.lines
+        .where((l) => !l.exempt)
+        .fold(0, (sum, l) => sum + (l.qty - (scanned[l.sku] ?? 0)).clamp(0, l.qty));
+  }
+
+  /// A tag that's fine on its own, checked against the order: red when it isn't on it.
+  BasketItem _againstOrder(BasketItem item) {
+    final o = _order;
+    if (o == null || item.state != ItemState.ok) return item;
+    final why = rejectReason(o, item.sku, scannedBySku[item.sku] ?? 0);
+    if (why == null) return item;
+    return BasketItem(
+      item.epc,
+      state: ItemState.problem,
+      problem: why,
+      productName: item.productName,
+      productCode: item.productCode,
+      variation: item.variation,
+      sku: item.sku,
+      multiplier: item.multiplier,
+    );
+  }
 
   /// What still stops Confirm, in words for the cashier. Null when nothing does.
   String? get missing {
     if (_items.isEmpty) return null;
     if (hasProblems) return 'Waiting for the red item to go';
+    if (_order != null && orderLeft > 0) return 'Scan every item on the order: $orderLeft ${orderLeft == 1 ? 'piece' : 'pieces'} to go';
     if (!hasReceipt) return receiptCheck.error ?? 'Enter the StoreHub receipt number.';
     return null;
   }
@@ -312,6 +380,7 @@ class BasketController extends ChangeNotifier {
     receiptNo = '';
     noReceiptReason = null;
     exchange = null;
+    _order = null; // the next customer starts a free checkout
     notifyListeners();
   }
 
@@ -387,7 +456,7 @@ class BasketController extends ChangeNotifier {
       message = '${ignoredUnknown == 1 ? '1 unknown tag' : '$ignoredUnknown unknown tags'} ignored (no product).';
       return;
     }
-    final item = itemFromInspection(t, storeId);
+    final item = _againstOrder(itemFromInspection(t, storeId));
     _items[epc] = item;
     if (item.state == ItemState.problem) _expireLater(epc, item.problem ?? '');
   }

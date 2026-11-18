@@ -511,8 +511,9 @@ class _ReturnScreenState extends State<ReturnScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (order != null)
-          _OrderBox(
-            order: order,
+          OrderBox(
+            title: 'Order ${order.invoiceNumber}',
+            subtitle: '${paidText(order.paidAt)} · ${plural(order.totalQty, 'pc')}',
             onChange: widget.order == null && widget.orders != null
                 ? () {
                     _receipt.clear();
@@ -597,7 +598,6 @@ class _ReturnScreenState extends State<ReturnScreen> {
 
   /// The order's items, each with how many are coming back now: the matched ones are green.
   Widget _orderLines(BuildContext context, StoreHubOrder order) {
-    final c = context.altai;
     final coming = _return.piecesBySku;
     final lines = order.lines.where((l) => !l.exempt).toList();
     return ListView.separated(
@@ -608,47 +608,14 @@ class _ReturnScreenState extends State<ReturnScreen> {
         final now = coming[l.sku] ?? 0;
         final before = order.returned[l.sku] ?? 0;
         final left = order.returnableQty(l.sku);
-        return Container(
+        return OrderProgressLine(
           key: ValueKey('order-line-${l.sku}'),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            color: now > 0 ? c.brandTint : c.surfaceSunken,
-            borderRadius: BorderRadius.circular(10),
-            border: now > 0 ? Border.all(color: c.brandBorder) : null,
-          ),
-          child: Row(
-            children: [
-              Icon(
-                now > 0 ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
-                size: 20,
-                color: now > 0 ? c.brandInk : c.inkMuted,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(l.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AltaiType.label.copyWith(
-                            fontWeight: FontWeight.w600, color: left == 0 ? c.inkMuted : c.ink)),
-                    Text(
-                      [?l.variation, if (before > 0) '$before returned before'].join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AltaiType.caption.copyWith(fontSize: 13, color: c.inkMuted),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '$now / $left',
-                style: AltaiType.label.copyWith(fontWeight: FontWeight.w700, color: now > 0 ? c.brandInk : c.inkMuted),
-              ),
-            ],
-          ),
+          name: l.name,
+          detail: [?l.variation, if (before > 0) '$before returned before'].join(' · '),
+          count: '$now / $left',
+          started: now > 0,
+          full: now > 0 && now >= left,
+          dim: left == 0,
         );
       },
     );
@@ -842,53 +809,6 @@ class _Problem extends StatelessWidget {
             AltaiButton('Try again', onPressed: onRetry, variant: AltaiButtonVariant.primary, large: true),
           ]),
         ),
-      ),
-    );
-  }
-}
-
-/// The order the items come back on, at the top of the panel.
-class _OrderBox extends StatelessWidget {
-  const _OrderBox({required this.order, this.onChange});
-
-  final StoreHubOrder order;
-  final VoidCallback? onChange;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.altai;
-    String two(int v) => v.toString().padLeft(2, '0');
-    final t = order.paidAt;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
-      decoration: BoxDecoration(
-        color: c.brandTint,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: c.brand, width: 1.5),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.receipt_long_outlined, color: c.brandInk),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Order ${order.invoiceNumber}',
-                    key: const ValueKey('return-order'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AltaiType.label.copyWith(fontWeight: FontWeight.w700, color: c.ink)),
-                Text(
-                  'Paid ${two(t.day)}/${two(t.month)}/${t.year} ${two(t.hour)}:${two(t.minute)} · '
-                  '${plural(order.totalQty, 'pc')}',
-                  style: AltaiType.caption.copyWith(fontSize: 13, color: c.brandInk),
-                ),
-              ],
-            ),
-          ),
-          if (onChange != null) TextButton(onPressed: onChange, child: const Text('Change')),
-        ],
       ),
     );
   }

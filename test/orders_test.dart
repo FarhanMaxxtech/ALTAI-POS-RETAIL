@@ -1,7 +1,9 @@
 import 'package:altai_pos/features/checkout/data/checkout_api.dart';
 import 'package:altai_pos/features/orders/data/orders_api.dart';
 import 'package:altai_pos/features/orders/domain/order.dart';
-import 'package:altai_pos/features/orders/domain/order_scan_controller.dart';
+import 'package:altai_pos/features/checkout/domain/basket.dart';
+import 'package:altai_pos/features/checkout/domain/basket_controller.dart';
+import 'package:altai_pos/features/checkout/domain/checkout_summary.dart';
 import 'package:altai_pos/features/orders/presentation/orders_screen.dart';
 import 'package:altai_pos/shared/altai_theme.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +36,25 @@ class FakeInspector implements CheckoutApi {
     'product_name': name,
     'variation': variation,
   };
+
+  final sold = <List<String>>[]; // what each checkout recorded
+
+  @override
+  Future<List<CheckoutSummary>> findByReceipt(String storeId, String receiptNo) async => [];
+
+  @override
+  Future<String> checkout({
+    required String storeId,
+    required String clientRef,
+    required List<String> epcs,
+    String staffName = '',
+    String receiptNo = '',
+    String noReceiptReason = '',
+    String exchangeFor = '',
+  }) async {
+    sold.add(epcs);
+    return '501';
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -75,59 +96,63 @@ void main() {
     expect(ageText(paid, paid.add(const Duration(minutes: 65))), '1 h 5 min ago');
   });
 
-  group('scanning an order', () {
-    late FakeOrdersApi orders;
-    late OrderScanController scan;
+  group('checkout of an order', () {
+    late BasketController basket;
     setUp(() {
-      orders = FakeOrdersApi(delay: Duration.zero);
-      scan = OrderScanController(
-        order: order,
-        inspector: FakeInspector(),
-        orders: orders,
-        storeId: '12',
-        staffName: 'Aina',
-      );
+      basket = BasketController(api: FakeInspector(), storeId: '12', staffName: 'Aina', checkDelay: Duration.zero)
+        ..useOrder(order);
     });
+    tearDown(() => basket.dispose());
     Future<void> read(String text) async {
-      scan.addText(text);
-      await Future<void>.delayed(Duration.zero);
-      await Future<void>.delayed(Duration.zero);
+      basket.addText(text);
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
+
+    Map<String, String?> red() => {
+      for (final i in basket.items)
+        if (i.state == ItemState.problem) i.epc[0]: i.problem,
+    };
+
+    test('the order\'s receipt no. is used, and no receipt check gets in the way', () {
+      expect(basket.receiptNo, 'SH-0012');
+      expect(basket.hasReceipt, isTrue);
+      expect(basket.orderLeft, 2); // the paper bag needs no tag
+    });
 
     test('wrong items, extra pieces and other stores\' tags are refused', () async {
       await read('${tag('A', 1)} ${tag('B', 1)} ${tag('A', 2)} ${tag('A', 3)} ${tag('D', 1)} ${tag('F', 1)}');
-      expect(scan.scannedOf('CT-BLK-M'), 2);
-      expect(
-        {for (final r in scan.rejected) r.epc[0]: r.reason},
-        {
-          'B': 'Not in this order',
-          'A': 'Order has only 2 of this',
-          'D': 'Belongs to Pavilion',
-        },
-      );
-      expect(scan.ignoredUnknown, 1); // F has no product: left out, not refused
-      expect(scan.allMatched, isTrue); // the paper bag needs no tag
+      expect(basket.scannedBySku, {'CT-BLK-M': 2});
+      expect(red(), {'B': 'Not in this order', 'A': 'Order has only 2 of this', 'D': 'Belongs to Pavilion'});
+      expect(basket.ignoredUnknown, 1); // F has no product: left out, not refused
+      expect(basket.orderLeft, 0);
+    });
+
+    test('Confirm only when every item on the order is scanned', () async {
+      await read(tag('A', 1));
+      expect(basket.canComplete, isFalse);
+      expect(basket.missing, 'Scan every item on the order: 1 piece to go');
+      await read(tag('A', 2));
+      expect(basket.canComplete, isTrue);
     });
 
     test('the same tag read twice counts once', () async {
       await read(tag('A', 1));
       await read('${tag('A', 1)} ${tag('A', 1)}');
-      expect(scan.scannedQty, 1);
-      expect(scan.allMatched, isFalse);
-      expect(scan.rejected, isEmpty);
+      expect(basket.scannedBySku, {'CT-BLK-M': 1});
+      expect(red(), isEmpty);
     });
 
-    test('complete only when every tagged line is full', () async {
-      await read(tag('A', 1));
-      await scan.complete();
-      expect(scan.phase, OrderScanPhase.scanning);
-      expect(orders.completed, isEmpty);
-
-      await read(tag('A', 2));
-      await scan.complete();
-      expect(scan.phase, OrderScanPhase.done);
-      expect(orders.completed.single.refId, 'r1');
-      expect(orders.completed.single.epcs, [tag('A', 1), tag('A', 2)]);
+    test('picking the order after scanning checks the items again', () async {
+      basket.useOrder(null);
+      await read('${tag('A', 1)} ${tag('B', 1)}');
+      expect(red(), isEmpty); // a free checkout: anything from this store
+      basket.useOrder(order);
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(red(), {'B': 'Not in this order'});
     });
   });
 
@@ -177,31 +202,39 @@ void main() {
       expect(find.textContaining('Demo orders'), findsOneWidget);
 
       await tester.tap(find.text(newer));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600)); // no settling: the checkout reads at once
+      // The checkout, with every item on the order before anything is scanned.
       expect(find.text('Order $newer'), findsOneWidget);
-      expect(find.text('0 / 2'), findsOneWidget);
+      expect(find.text('0 / 1'), findsNWidgets(2)); // Slim Jeans and Classic Tee Black / L
       expect(find.text('Reader on'), findsOneWidget); // reading at once: no Scan page, no Scan button
       expect(find.text('Scan'), findsNothing);
+      bool confirmOn() => tester.widget<TextButton>(find.widgetWithText(TextButton, 'Confirm')).onPressed != null;
 
       Future<void> scanTags(String text) async {
         await scanWithReader(tester, reader, text.split(' '));
-        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 300));
       }
 
       await scanTags('${tag('B', 1)} ${tag('A', 1)}');
       expect(find.text('1 / 1'), findsOneWidget); // the jeans
-      expect(find.text('Not in this order'), findsOneWidget); // the Black / M tee
-      expect(tester.widget<TextButton>(find.widgetWithText(TextButton, 'Complete order')).onPressed, isNull);
+      expect(find.text('Not in this order'), findsOneWidget); // the Black / M tee: a red card
+      expect(confirmOn(), isFalse);
+      await tester.pump(const Duration(seconds: 12)); // the red card goes away by itself
 
       await scanTags(tag('C', 1));
-      expect(find.text('2 / 2'), findsOneWidget);
-      await tester.tap(find.text('Complete order'));
-      await tester.pumpAndSettle();
-      expect(find.text('Order complete'), findsOneWidget);
-      expect(find.text('Demo: nothing was changed in stock.'), findsOneWidget);
-      expect(orders.completed.single.epcs, [tag('B', 1), tag('C', 1)]);
+      expect(find.text('1 / 1'), findsNWidgets(2));
+      expect(confirmOn(), isTrue);
+      await tester.tap(find.text('Confirm'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.tap(find.text('Submit'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('Good to go'), findsOneWidget);
+      expect(orders.completed.single.epcs, unorderedEquals([tag('B', 1), tag('C', 1)]));
 
-      await tester.tap(find.text('Back to orders'));
+      await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       expect(find.text(newer), findsNothing); // done orders leave the list
       expect(find.text(older), findsOneWidget);
@@ -234,7 +267,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
-    expect(find.text('Leave this order?'), findsOneWidget);
+    expect(find.text('Leave this checkout?'), findsOneWidget);
     await tester.tap(find.text('Leave'));
     await tester.pumpAndSettle();
     expect(find.text('Demo order'), findsOneWidget); // back on the orders list

@@ -6,14 +6,18 @@ import '../../../shared/altai_theme.dart';
 import '../../../shared/altai_widgets.dart';
 import '../../../shared/pos_layout.dart';
 import '../../../shared/rfid_reader.dart';
-import '../../checkout/presentation/scan_page.dart';
+import '../../catalog/data/catalog_api.dart';
 import '../../checkout/data/checkout_api.dart';
+import '../../checkout/data/store_tags.dart';
+import '../../checkout/presentation/basket_screen.dart';
+import '../../checkout/presentation/scan_page.dart';
+import '../../returns/data/returns_api.dart';
 import '../data/orders_api.dart';
 import '../domain/order.dart';
-import 'order_scan_screen.dart';
 
 /// Paid StoreHub orders of this store that still need their items scanned. The cashier picks one,
-/// usually the newest, and scans its items. The list refreshes by itself.
+/// usually the newest, and the checkout opens with every item on it, each with its scan progress.
+/// The list refreshes by itself.
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({
     super.key,
@@ -24,7 +28,16 @@ class OrdersScreen extends StatefulWidget {
     required this.staffName,
     this.refreshEvery = const Duration(seconds: 10),
     this.tagReader = const UsbTagReader(),
+    this.catalog,
+    this.returns,
+    this.storeTags,
+    this.onSold,
   });
+
+  final CatalogApi? catalog;
+  final ReturnsApi? returns;
+  final StoreTags? storeTags;
+  final void Function(int pieces)? onSold;
 
   /// The USB RFID reader the Scan page drives.
   final TagReader tagReader;
@@ -80,13 +93,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
     await Navigator.of(context).push<bool>(
       shellRoute(
         context,
-        OrderScanScreen(
+        BasketScreen(
           order: order,
-          inspector: widget.inspector,
+          api: widget.inspector,
           orders: widget.orders,
           storeId: widget.storeId,
+          storeName: widget.storeName,
           staffName: widget.staffName,
+          catalog: widget.catalog,
+          returns: widget.returns,
+          storeTags: widget.storeTags,
           tagReader: widget.tagReader,
+          onSold: widget.onSold,
+          onBack: () => Navigator.of(context).pop(),
         ),
       ),
     );

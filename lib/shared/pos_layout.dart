@@ -1196,3 +1196,122 @@ class ExchangeSteps extends StatelessWidget {
     );
   }
 }
+
+/// The StoreHub order a checkout or return is for, at the top of the order panel.
+class OrderBox extends StatelessWidget {
+  const OrderBox({super.key, required this.title, required this.subtitle, this.onChange});
+
+  final String title; // "Order 0022…"
+  final String subtitle; // "Paid 17/11/2026 14:02 · 5 pcs"
+  final VoidCallback? onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.altai;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+      decoration: BoxDecoration(
+        color: c.brandTint,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.brand, width: 1.5),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.receipt_long_outlined, color: c.brandInk),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    key: const ValueKey('order-box'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AltaiType.label.copyWith(fontWeight: FontWeight.w700, color: c.ink)),
+                Text(subtitle, style: AltaiType.caption.copyWith(fontSize: 13, color: c.brandInk)),
+              ],
+            ),
+          ),
+          if (onChange != null)
+            TextButton(
+              onPressed: onChange,
+              style: TextButton.styleFrom(
+                textStyle: AltaiType.label.copyWith(fontWeight: FontWeight.w600),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                minimumSize: const Size(0, 40),
+              ),
+              child: const Text('Change'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One item of an order with its progress: "Classic Tee · Black / M ....... 1 / 2". Green with a
+/// tick once complete ([full]), light green while in progress, grey before the first piece.
+class OrderProgressLine extends StatelessWidget {
+  const OrderProgressLine({
+    super.key,
+    required this.name,
+    required this.count,
+    this.detail,
+    this.started = false,
+    this.full = false,
+    this.dim = false,
+  });
+
+  final String name;
+  final String? detail;
+  final String count; // "1 / 2"
+  final bool started;
+  final bool full;
+  final bool dim; // nothing left to do on this line
+  @override
+  Widget build(BuildContext context) {
+    final c = context.altai;
+    final on = started || full;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: on ? c.brandTint : c.surfaceSunken,
+        borderRadius: BorderRadius.circular(10),
+        border: full ? Border.all(color: c.brand) : (on ? Border.all(color: c.brandBorder) : null),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            full ? Icons.check_circle_rounded : (on ? Icons.timelapse_rounded : Icons.radio_button_unchecked_rounded),
+            size: 20,
+            color: on ? c.brandInk : c.inkMuted,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: dim ? c.inkMuted : c.ink)),
+                if (detail != null && detail!.isNotEmpty)
+                  Text(detail!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AltaiType.caption.copyWith(fontSize: 13, color: c.inkMuted)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(count, style: AltaiType.label.copyWith(fontWeight: FontWeight.w700, color: on ? c.brandInk : c.inkMuted)),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Paid 17/11/2026 14:02".
+String paidText(DateTime t) {
+  String two(int v) => v.toString().padLeft(2, '0');
+  return 'Paid ${two(t.day)}/${two(t.month)}/${t.year} ${two(t.hour)}:${two(t.minute)}';
+}

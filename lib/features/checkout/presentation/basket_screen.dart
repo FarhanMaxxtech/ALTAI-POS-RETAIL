@@ -49,6 +49,7 @@ class BasketScreen extends StatefulWidget {
     this.storeTags,
     this.onSold,
     this.initialExchange,
+    this.order,
   });
 
   final CheckoutApi api;
@@ -86,6 +87,10 @@ class BasketScreen extends StatefulWidget {
 
   /// Exchange started from the order history: the items are already back, now the new ones.
   final ExchangeReturn? initialExchange;
+
+  /// The paid StoreHub order these items are for (picked in Orders): every item on it shows with
+  /// its scan progress, and Confirm waits until all are scanned.
+  final StoreHubOrder? order;
 
   @override
   State<BasketScreen> createState() => _BasketScreenState();
@@ -147,6 +152,10 @@ class _BasketScreenState extends State<BasketScreen> {
     _basket.addListener(_onBasketChanged);
     _reader.addListener(_onReaderChanged);
     if (widget.initialExchange case final e?) _basket.startExchange(e);
+    if (widget.order case final o?) {
+      _basket.useOrder(o);
+      _receipt.text = o.invoiceNumber;
+    }
     if (widget.initialTags.isNotEmpty) _basket.addText(widget.initialTags.join(' '));
     _reader.start();
   }
@@ -230,7 +239,14 @@ class _BasketScreenState extends State<BasketScreen> {
     final phase = _basket.phase;
     // Back to scanning (a new basket, or the sale didn't go through): read again.
     if (phase != _lastPhase && phase == BasketPhase.scanning && !_pausedNow) _reader.start();
-    if (phase != _lastPhase && phase == BasketPhase.done) widget.onSold?.call(_basket.okCount);
+    if (phase != _lastPhase && phase == BasketPhase.done) {
+      widget.onSold?.call(_basket.okCount);
+      // The order is done: the server links the sold tags to it (and returns can check them later).
+      if ((_basket.order, widget.orders) case (final o?, final api?)) {
+        final epcs = [for (final i in _basket.items) if (i.state == ItemState.ok) i.epc];
+        api.complete(o, epcs, staffName: widget.staffName).catchError((_) {});
+      }
+    }
     _lastPhase = phase;
     // One beep each time a new tag lands in the basket.
     if (count > _lastCount) {
@@ -318,6 +334,7 @@ class _BasketScreenState extends State<BasketScreen> {
     final no = CheckoutApi.cleanReceipt(pick.invoiceNumber);
     _receipt.text = no;
     _setReceipt(no);
+    _basket.useOrder(pick); // its items show, each with its scan progress
     setState(() => _found = "Today's sale found");
   }
 
@@ -445,6 +462,7 @@ class _BasketScreenState extends State<BasketScreen> {
             _basket.phase == BasketPhase.scanning ? _askReceipt : null,
           ),
           beforeLeave: _mayLeave,
+          onBack: widget.order != null && widget.onBack != null ? _leave : null, // opened from Orders
           body: switch (_basket.phase) {
             BasketPhase.scanning => _scanning(context),
             BasketPhase.sending => _sending(context),
@@ -746,7 +764,18 @@ class _BasketScreenState extends State<BasketScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (reason != null)
+        if (_basket.order case final o?)
+          OrderBox(
+            title: 'Order ${o.invoiceNumber}',
+            subtitle: '${paidText(o.paidAt)} · ${plural(o.totalQty, 'pc')}',
+            onChange: () {
+              _receipt.clear();
+              _found = null;
+              _basket.setReceipt('');
+              _basket.useOrder(null);
+            },
+          )
+        else if (reason != null)
           Container(
             padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
             decoration: BoxDecoration(color: c.warningTint, borderRadius: BorderRadius.circular(10)),
@@ -790,7 +819,7 @@ class _BasketScreenState extends State<BasketScreen> {
                   ),
           ),
         const SizedBox(height: 12),
-        if (reason == null && _receipt.text.isEmpty)
+        if (reason == null && _receipt.text.isEmpty && _basket.order == null)
           Row(
             children: [
               Expanded(child: TintButton('No receipt', onPressed: _pickNoReceipt)),
@@ -799,7 +828,9 @@ class _BasketScreenState extends State<BasketScreen> {
           ),
         const SizedBox(height: 12),
         Expanded(
-          child: _basket.exchange != null
+          child: _basket.order != null
+              ? _orderProgress(context, _basket.order!)
+              : _basket.exchange != null
               ? _exchangeLines(context, _basket.exchange!, rows)
               : rows.isEmpty
               ? Center(
@@ -829,7 +860,7 @@ class _BasketScreenState extends State<BasketScreen> {
                   },
                 ),
         ),
-        if (reason == null && _receipt.text.isNotEmpty) ...[
+        if (reason == null && _receipt.text.isNotEmpty && _basket.order == null) ...[
           const SizedBox(height: 8),
           Container(
             height: 44,
@@ -853,7 +884,10 @@ class _BasketScreenState extends State<BasketScreen> {
           ),
         ],
         const SizedBox(height: 12),
-        PanelRow('Pieces', piecesText),
+        if (_basket.order case final o?)
+          PanelRow('Scanned', '${o.taggedQty - _basket.orderLeft} / ${o.taggedQty}')
+        else
+          PanelRow('Pieces', piecesText),
         if (problems > 0) PanelRow('Needs attention', '$problems', valueColor: c.danger),
         if (_basket.exchange case final e? when _showPrices) ...[
           PanelRow('New items', 'RM ${formatRm(_basket.totalCents)}'),
@@ -892,6 +926,37 @@ class _BasketScreenState extends State<BasketScreen> {
           onConfirm: _basket.canComplete ? () => _confirm(lines) : null,
         ),
       ],
+    );
+  }
+
+  /// Every item on the order, each with how many are scanned: all are listed before scanning starts.
+  Widget _orderProgress(BuildContext context, StoreHubOrder o) {
+    final scanned = _basket.scannedBySku;
+    return ListView.separated(
+      itemCount: o.lines.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
+      itemBuilder: (context, i) {
+        final l = o.lines[i];
+        if (l.exempt) {
+          return OrderProgressLine(
+            key: ValueKey('order-line-${l.sku}'),
+            name: l.name,
+            detail: [?l.variation, 'no tag to scan'].join(' · '),
+            count: '× ${l.qty}',
+            full: true,
+            dim: true,
+          );
+        }
+        final now = (scanned[l.sku] ?? 0).clamp(0, l.qty);
+        return OrderProgressLine(
+          key: ValueKey('order-line-${l.sku}'),
+          name: l.name,
+          detail: l.variation,
+          count: '$now / ${l.qty}',
+          started: now > 0,
+          full: now >= l.qty,
+        );
+      },
     );
   }
 

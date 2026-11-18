@@ -163,6 +163,10 @@ class _HomeScreenState extends State<HomeScreen> {
           storeName: widget.storeName,
           staffName: widget.staffName,
           tagReader: widget.tagReader,
+          catalog: widget.catalog,
+          returns: widget.returns,
+          storeTags: widget.storeTags,
+          onSold: _sold,
         ));
       case Section.history when orders != null:
         _push(OrderHistoryScreen(

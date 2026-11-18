@@ -32,6 +32,7 @@ class HomeScreen extends StatefulWidget {
     this.storeTags,
     this.tagReader = const UsbTagReader(),
     this.clock = DateTime.now,
+    this.onChangeStore,
   });
 
   final CheckoutApi api;
@@ -45,6 +46,9 @@ class HomeScreen extends StatefulWidget {
   final StoreTags? storeTags;
   final TagReader tagReader;
   final DateTime Function() clock;
+
+  /// Settings → Change store: back to the store picker. Null = no Change store button.
+  final VoidCallback? onChangeStore;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -216,7 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _settings() async {
     final c = context.altai;
-    final logout = await showDialog<bool>(
+    final pick = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Settings', style: AltaiType.title.copyWith(color: c.ink)),
@@ -226,24 +230,27 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              PanelRow('Location', widget.storeName),
+              PanelRow('Store', widget.storeName),
               PanelRow('Cashier', widget.staffName),
               const PanelRow('Reader', 'USB desk reader'),
               const SizedBox(height: D.space3),
               Text(
-                'The location is changed from the login screen.',
+                'To work in another store, change the store: you stay logged in.',
                 style: AltaiType.caption.copyWith(color: c.inkMuted),
               ),
             ],
           ),
         ),
         actions: [
-          AltaiButton('Log out', onPressed: () => Navigator.pop(context, true), icon: Icons.logout_rounded),
-          AltaiButton('Close', onPressed: () => Navigator.pop(context, false), variant: AltaiButtonVariant.primary),
+          AltaiButton('Log out', onPressed: () => Navigator.pop(context, 'logout'), icon: Icons.logout_rounded),
+          if (widget.onChangeStore != null)
+            AltaiButton('Change store', onPressed: () => Navigator.pop(context, 'store'), icon: Icons.storefront_rounded),
+          AltaiButton('Close', onPressed: () => Navigator.pop(context), variant: AltaiButtonVariant.primary),
         ],
       ),
     );
-    if (logout == true) _logout();
+    if (pick == 'logout') _logout();
+    if (pick == 'store') widget.onChangeStore?.call();
   }
 
   /* ---------------- The page ---------------- */

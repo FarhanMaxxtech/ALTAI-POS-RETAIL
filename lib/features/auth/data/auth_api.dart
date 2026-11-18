@@ -15,23 +15,11 @@ class AuthApi {
   String? _loginId;
   String? _password;
 
-  /// Merchant/Login at this tablet's [location]. Keeps the session on the API client and saves it
-  /// on the tablet. Refused when the account can't see that store, so nobody sells in a store
-  /// they don't belong to.
-  Future<Staff> login(String loginId, String password, {required Store location}) async {
+  /// Merchant/Login. Keeps the session on the API client and saves it on the tablet. The store is
+  /// picked next, from [stores]: only the stores this account can use are offered, so nobody sells
+  /// in a store they don't belong to.
+  Future<Staff> login(String loginId, String password) async {
     final res = await _api.login({'loginId': loginId, 'password': password});
-    _api.session = res.session;
-    _api.merchantId = res.merchantId;
-    try {
-      final allowed = await stores();
-      if (!allowed.any((s) => s.id == location.id)) {
-        throw ApiException('This account can\'t use ${location.name}. Ask your manager.', refused: true);
-      }
-    } catch (_) {
-      _api.session = null;
-      _api.merchantId = null;
-      rethrow;
-    }
     _loginId = loginId;
     _password = password;
     await _use(res, fallbackName: loginId, loginId: loginId, password: password);
@@ -64,7 +52,7 @@ class AuthApi {
     }
   }
 
-  /// Forgets the login, in memory and on the tablet. The location stays.
+  /// Forgets the login, in memory and on the tablet. The last store is kept, to offer it first.
   Future<void> logout() async {
     ApiClient.sessionLog('logout: saved session cleared');
     _api.session = null;
@@ -74,27 +62,11 @@ class AuthApi {
     await _session.clear();
   }
 
-  /// The store this tablet is set to, or null before it's set.
+  /// The store picked last on this tablet, or null. After a restart the tablet goes straight back
+  /// to it; after a new login it's offered first.
   Future<Store?> location() => _session.loadLocation();
 
   Future<void> setLocation(Store store) => _session.saveLocation(store);
-
-  /// The stores a manager's account can see, for setting the location from the login screen.
-  /// Logs that account in only for this one call: nobody stays logged in.
-  Future<List<Store>> storesFor(String loginId, String password) async {
-    final res = await _api.login({'loginId': loginId, 'password': password});
-    ApiClient.sessionLog('setting the location: extra login ${ApiClient.tail(res.session)}');
-    final session = _api.session;
-    final merchantId = _api.merchantId;
-    _api.session = res.session;
-    _api.merchantId = res.merchantId;
-    try {
-      return await stores();
-    } finally {
-      _api.session = session;
-      _api.merchantId = merchantId;
-    }
-  }
 
   /// When the app opens: is there a saved login, and is it still valid?
   /// Returns null when staff have to log in again.

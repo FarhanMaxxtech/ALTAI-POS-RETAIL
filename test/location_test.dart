@@ -32,35 +32,23 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
-  test('a manager lists stores without staying logged in', () async {
+  test('staff log in first, then see only the stores they can use', () async {
     final api = fakeTeam();
     final auth = AuthApi(api, SessionStore());
-    final stores = await auth.storesFor('boss', 'x');
-    expect(stores.map((s) => s.name), ['MidValley', 'Pavilion']);
-    expect(api.session, isNull);
-  });
-
-  test('staff log in at the preset location', () async {
-    final api = fakeTeam();
-    final auth = AuthApi(api, SessionStore());
-    final staff = await auth.login('aina', 'x', location: const Store(id: '12', name: 'MidValley'));
+    final staff = await auth.login('aina', 'x');
     expect(staff.name, 'aina');
     expect(api.session, 's-aina');
+    expect((await auth.stores()).map((s) => s.name), ['MidValley']);
+
+    final boss = AuthApi(fakeTeam(), SessionStore());
+    await boss.login('boss', 'x');
+    expect((await boss.stores()).map((s) => s.name), ['MidValley', 'Pavilion']);
   });
 
-  test('refused when the account cannot use that store, and nobody stays logged in', () async {
-    final api = fakeTeam();
-    final auth = AuthApi(api, SessionStore());
-    await expectLater(auth.login('aina', 'x', location: const Store(id: '14', name: 'Pavilion')),
-        throwsA(isA<ApiException>().having((e) => e.message, 'message', contains('Pavilion'))));
-    expect(api.session, isNull);
-    expect(await SessionStore().load(), isNull);
-  });
-
-  test('the location stays when staff log out', () async {
+  test('the last store stays when staff log out, to offer it first next time', () async {
     final auth = AuthApi(fakeTeam(), SessionStore());
+    await auth.login('aina', 'x');
     await auth.setLocation(const Store(id: '12', name: 'MidValley'));
-    await auth.login('aina', 'x', location: const Store(id: '12', name: 'MidValley'));
     await auth.logout();
     expect((await auth.location())?.name, 'MidValley');
     expect(await SessionStore().load(), isNull);
@@ -68,7 +56,7 @@ void main() {
 
   test('the app was closed and Altai ended the session: logs in again by itself, no login screen', () async {
     await AuthApi(fakeTeam(), SessionStore())
-        .login('aina', 'x', location: const Store(id: '12', name: 'MidValley'));
+        .login('aina', 'x');
 
     // The app opens again. Altai has ended s-aina meanwhile; a new login gives new-aina.
     var logins = 0;
@@ -98,7 +86,7 @@ void main() {
 
   test('log out forgets the saved login, password included', () async {
     final auth = AuthApi(fakeTeam(), SessionStore());
-    await auth.login('aina', 'x', location: const Store(id: '12', name: 'MidValley'));
+    await auth.login('aina', 'x');
     expect((await SessionStore().load())?.password, 'x');
     await auth.logout();
     expect(await const FlutterSecureStorage().read(key: 'password'), isNull);

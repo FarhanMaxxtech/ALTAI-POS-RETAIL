@@ -5,6 +5,7 @@ import 'features/auth/data/auth_api.dart';
 import 'features/auth/data/session_store.dart';
 import 'features/auth/domain/staff.dart';
 import 'features/auth/presentation/login_screen.dart';
+import 'features/auth/presentation/store_screen.dart';
 import 'features/checkout/data/checkout_api.dart';
 import 'features/checkout/data/store_tags.dart';
 import 'features/catalog/data/catalog_api.dart';
@@ -16,9 +17,9 @@ import 'shared/altai_widgets.dart';
 
 void main() => runApp(const AltaiPosApp());
 
-/// Log in → the start page (Scan for Checkout / Return / Refund). The tablet's location (its store) is set once from the login screen and stays
-/// when staff log out, so nobody picks a store. The login is remembered too, so reopening the app
-/// goes straight to the basket.
+/// Log in → pick the store (from the stores the account can use; skipped when there's only one) →
+/// the start page. The login and the store are remembered, so reopening the app goes straight back
+/// in. After logging out, the next login offers the last store first.
 class AltaiPosApp extends StatefulWidget {
   const AltaiPosApp({super.key});
 
@@ -34,7 +35,8 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
   late final _returns = ReturnsApi(_api);
   final _orders = FakeOrdersApi(); // demo until the Altai server sends StoreHub orders
   Staff? _staff;
-  Store? _location;
+  Store? _location; // the store picked for this login; null = the store picker shows
+  Store? _lastStore; // picked last on this tablet: offered first
   bool _restoring = true; // checking the saved login when the app opens
   final _nav = GlobalKey<NavigatorState>();
   String? _loginNotice; // why the login screen came back
@@ -77,19 +79,40 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
   }
 
   Future<void> _restore() async {
-    final location = await _auth.location();
-    final saved = location == null ? null : await _auth.restore();
+    final last = await _auth.location();
+    final saved = await _auth.restore();
     if (!mounted) return;
     setState(() {
-      _location = location;
-      if (saved != null) _staff = Staff(saved.staffName);
+      _lastStore = last;
+      if (saved != null) {
+        _staff = Staff(saved.staffName);
+        _location = last; // still logged in: the same store as before (null = pick one)
+      }
       _restoring = false;
     });
   }
 
   Future<void> _logout() async {
     await _auth.logout();
-    setState(() => _staff = null);
+    setState(() {
+      _staff = null;
+      _location = null;
+    });
+  }
+
+  Future<void> _pickStore(Store store) async {
+    await _auth.setLocation(store);
+    if (!mounted) return;
+    setState(() {
+      _location = store;
+      _lastStore = store;
+    });
+  }
+
+  /// Settings → Change store: back to the store picker, still logged in.
+  void _changeStore() {
+    _nav.currentState?.popUntil((route) => route.isFirst);
+    setState(() => _location = null);
   }
 
   @override
@@ -106,17 +129,25 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
       builder: aboveSystemBars,
       home: _restoring
           ? const Scaffold(body: Center(child: CircularProgressIndicator()))
-          : staff == null || location == null
+          : staff == null
               ? LoginScreen(
                   auth: _auth,
-                  location: location,
                   notice: _loginNotice,
-                  onLocationSet: (s) => setState(() => _location = s),
                   onLoggedIn: (s) => setState(() {
                         _staff = s;
+                        _location = null; // pick the store next
                         _loginNotice = null;
                       }))
+              : location == null
+              ? StoreScreen(
+                  loadStores: _auth.stores,
+                  staffName: staff.name,
+                  lastStore: _lastStore,
+                  onPicked: _pickStore,
+                  onLogout: _logout,
+                )
               : HomeScreen(
+                  key: ValueKey(location.id), // a new store starts a fresh start page
                   api: _checkout,
                   storeId: location.id,
                   storeName: location.name,
@@ -125,7 +156,8 @@ class _AltaiPosAppState extends State<AltaiPosApp> {
                   returns: _returns,
                   orders: _orders,
                   storeTags: _tagsFor(location.id),
-                  onLogout: _logout),
+                  onLogout: _logout,
+                  onChangeStore: _changeStore),
     );
   }
 }

@@ -6,24 +6,13 @@ import '../../../shared/altai_widgets.dart';
 import '../../../shared/keyboard.dart';
 import '../data/auth_api.dart';
 import '../domain/staff.dart';
-import 'location_screen.dart';
 
-/// Staff log in with their account from the team's system, at the tablet's preset location.
+/// Staff log in with their account from the team's system. The store is picked right after, from
+/// the stores this account can use.
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({
-    super.key,
-    required this.auth,
-    required this.location,
-    required this.onLocationSet,
-    required this.onLoggedIn,
-    this.notice,
-  });
+  const LoginScreen({super.key, required this.auth, required this.onLoggedIn, this.notice});
 
   final AuthApi auth;
-
-  /// The store this tablet is in. Null until a manager sets it: nobody can log in before that.
-  final Store? location;
-  final void Function(Store store) onLocationSet;
   final void Function(Staff staff) onLoggedIn;
 
   /// Why the login screen is back, e.g. the session ended. Shown until the next try.
@@ -47,23 +36,14 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _setLocation() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => LocationScreen(auth: widget.auth, current: widget.location, onSet: widget.onLocationSet),
-      ),
-    );
-  }
-
   Future<void> _submit() async {
-    final location = widget.location;
-    if (_busy || location == null) return;
+    if (_busy) return;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      widget.onLoggedIn(await widget.auth.login(_loginId.text.trim(), _password.text, location: location));
+      widget.onLoggedIn(await widget.auth.login(_loginId.text.trim(), _password.text));
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
@@ -100,8 +80,6 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 4),
             Text('Use your Altai account.', style: AltaiType.body.copyWith(fontSize: 17, color: c.inkMuted)),
             const SizedBox(height: 28),
-            _LocationRow(location: widget.location, onChange: _busy ? null : _setLocation),
-            const SizedBox(height: 24),
             label('Login ID'),
             TextField(
               onTap: showKeyboard,
@@ -134,7 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 24),
             AltaiButton(
               _busy ? 'Logging in…' : 'Log in',
-              onPressed: _busy || widget.location == null ? null : _submit,
+              onPressed: _busy ? null : _submit,
               variant: AltaiButtonVariant.primary,
               icon: Icons.login_rounded,
               expand: true,
@@ -210,57 +188,6 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           );
         },
-      ),
-    );
-  }
-}
-
-/// "Location: Subang Jaya · Change", or a prompt to set it.
-class _LocationRow extends StatelessWidget {
-  const _LocationRow({required this.location, required this.onChange});
-
-  final Store? location;
-  final VoidCallback? onChange;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.altai;
-    final store = location;
-    final fg = store == null ? c.warning : c.brandInk;
-    return Container(
-      constraints: const BoxConstraints(minHeight: 72),
-      padding: const EdgeInsets.fromLTRB(18, 10, 14, 10),
-      decoration: BoxDecoration(
-        color: store == null ? c.warningTint : c.brandTint,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.storefront_rounded, size: 26, color: fg),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Location', style: AltaiType.caption.copyWith(fontSize: 13, fontWeight: FontWeight.w500, color: fg)),
-                Text(store?.name ?? 'Not set yet',
-                    style: AltaiType.bodyStrong.copyWith(fontSize: 19, color: c.ink)),
-              ],
-            ),
-          ),
-          TextButton(
-            onPressed: onChange,
-            style: TextButton.styleFrom(
-              backgroundColor: c.surfaceRaised,
-              foregroundColor: c.ink,
-              minimumSize: const Size(0, 44),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: BorderSide(color: c.border)),
-              textStyle: AltaiType.label.copyWith(fontWeight: FontWeight.w600),
-            ),
-            child: Text(store == null ? 'Set location' : 'Change'),
-          ),
-        ],
       ),
     );
   }

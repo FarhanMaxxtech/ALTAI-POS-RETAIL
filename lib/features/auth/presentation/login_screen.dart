@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/api_client.dart';
@@ -76,7 +78,9 @@ class _LoginScreenState extends State<LoginScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Log in', style: AltaiType.title.copyWith(fontSize: 34, fontWeight: FontWeight.w700, color: c.ink)),
+            const Align(alignment: Alignment.centerLeft, child: LogoTile(size: 56)),
+            const SizedBox(height: 24),
+            Text('Log in', style:AltaiType.title.copyWith(fontSize: 34, fontWeight: FontWeight.w700, color: c.ink)),
             const SizedBox(height: 4),
             Text('Use your Altai account.', style: AltaiType.body.copyWith(fontSize: 17, color: c.inkMuted)),
             const SizedBox(height: 28),
@@ -122,93 +126,222 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
 
-    final brand = Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [c.logoGreenTop, c.logoGreenBottom],
-        ),
-      ),
-      // With the keyboard up there's little height left: then only the logo shows.
-      child: LayoutBuilder(
-        builder: (context, box) {
-          final roomy = box.maxHeight >= 520;
-          return Padding(
-            padding: EdgeInsets.all(roomy ? 64 : 40),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AltaiLogo(height: roomy ? 72 : 56, full: true),
-                if (roomy) ...[
-                  const Spacer(),
-                  // Two lines, made a little smaller rather than wrapping on a narrow panel.
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Checkout and returns,\nstraight from the tags.',
-                      style: AltaiType.title.copyWith(
-                        fontSize: 40,
-                        height: 1.25,
-                        fontWeight: FontWeight.w700,
-                        color: c.onLogoGreen,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Put the items near the reader. Altai POS does the rest.',
-                    style: AltaiType.body.copyWith(color: c.onLogoGreen.withValues(alpha: 0.85)),
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ],
-            ),
-          );
-        },
-      ),
-    );
-
     return Scaffold(
-      backgroundColor: c.surface100,
+      backgroundColor: c.surfaceRaised,
       body: LayoutBuilder(
         builder: (context, box) {
           if (box.maxWidth >= 900) {
+            // The form on the left, the photos on the right.
             return Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SizedBox(width: box.maxWidth * 0.44, child: brand),
                 Expanded(
                   child: Center(
                     child: SingleChildScrollView(padding: const EdgeInsets.all(D.space8), child: form),
                   ),
                 ),
+                SizedBox(width: box.maxWidth * 0.5, child: const LoginPhotos()),
               ],
             );
           }
-          // Portrait: the logo on top, the form under it.
+          // Portrait: the photos on top, the form under them.
           return SingleChildScrollView(
             child: Column(
               children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: D.space8),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [c.logoGreenTop, c.logoGreenBottom],
-                    ),
-                  ),
-                  child: const Center(child: AltaiLogo(height: 96, full: true)),
-                ),
+                const SizedBox(height: 260, child: LoginPhotos(compact: true)),
                 Padding(padding: const EdgeInsets.all(D.space8), child: form),
               ],
             ),
           );
         },
       ),
+    );
+  }
+}
+
+/// The photo side of the login screen: store photos that change every few seconds under a green
+/// tint, with the welcome text in the middle. With the keyboard up (little height left) only the
+/// name shows.
+class LoginPhotos extends StatefulWidget {
+  const LoginPhotos({super.key, this.compact = false, this.every = const Duration(seconds: 6)});
+
+  /// Smaller text, for the banner on a portrait screen.
+  final bool compact;
+
+  /// How long each photo stays.
+  final Duration every;
+
+  /// The photos (free Unsplash photos, see assets/login/CREDITS.txt) and the line under each.
+  static const slides = [
+    ('assets/login/slide_1.jpg', 'Checkout straight from the tags.'),
+    ('assets/login/slide_2.jpg', 'Returns and exchanges, checked against the order.'),
+    ('assets/login/slide_3.jpg', 'Every sale matched to its receipt.'),
+    ('assets/login/slide_4.jpg', 'Put the items near the reader. Altai POS does the rest.'),
+  ];
+
+  @override
+  State<LoginPhotos> createState() => _LoginPhotosState();
+}
+
+class _LoginPhotosState extends State<LoginPhotos> {
+  int _index = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _restart();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Load the next photo ahead, so the change is smooth.
+    precacheImage(AssetImage(LoginPhotos.slides[(_index + 1) % LoginPhotos.slides.length].$1), context);
+  }
+
+  void _restart() {
+    _timer?.cancel();
+    _timer = Timer.periodic(widget.every, (_) => _go((_index + 1) % LoginPhotos.slides.length));
+  }
+
+  void _go(int i) {
+    if (!mounted) return;
+    setState(() => _index = i);
+    precacheImage(AssetImage(LoginPhotos.slides[(i + 1) % LoginPhotos.slides.length].$1), context);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.altai;
+    final (photo, line) = LoginPhotos.slides[_index];
+    final white = c.onLogoGreen;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ColoredBox(color: c.logoGreenBottom),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 900),
+          child: Image.asset(
+            photo,
+            key: ValueKey(photo),
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            gaplessPlayback: true,
+          ),
+        ),
+        // The Altai green over the photo, so the white text always reads.
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [c.logoGreenTop.withValues(alpha: 0.70), c.logoGreenBottom.withValues(alpha: 0.88)],
+            ),
+          ),
+        ),
+        // The big faint Altai mark behind the text.
+        LayoutBuilder(
+          builder: (context, box) => Center(
+            child: Opacity(
+              opacity: 0.08,
+              child: AltaiLogo(height: (box.maxHeight * 0.7).clamp(0, 420).toDouble()),
+            ),
+          ),
+        ),
+        LayoutBuilder(
+          builder: (context, box) {
+            final roomy = box.maxHeight >= (widget.compact ? 200 : 420);
+            return Padding(
+              padding: EdgeInsets.symmetric(horizontal: widget.compact ? 24 : 48, vertical: 24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (roomy)
+                    Text(
+                      'WELCOME TO',
+                      style: AltaiType.caption.copyWith(
+                        fontSize: widget.compact ? 13 : 15,
+                        letterSpacing: 4,
+                        fontWeight: FontWeight.w600,
+                        color: white.withValues(alpha: 0.85),
+                      ),
+                    ),
+                  if (roomy) const SizedBox(height: 8),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      'Altai POS',
+                      style: AltaiType.title.copyWith(
+                        fontSize: widget.compact ? 36 : 52,
+                        fontWeight: FontWeight.w700,
+                        color: white,
+                      ),
+                    ),
+                  ),
+                  if (roomy) ...[
+                    const SizedBox(height: 16),
+                    Container(width: 56, height: 3, color: white.withValues(alpha: 0.7)),
+                    const SizedBox(height: 16),
+                    // The line changes with the photo.
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 600),
+                      child: ConstrainedBox(
+                        key: ValueKey(line),
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Text(
+                          line,
+                          textAlign: TextAlign.center,
+                          style: AltaiType.body.copyWith(
+                            fontSize: widget.compact ? 15 : 18,
+                            height: 1.4,
+                            color: white.withValues(alpha: 0.92),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    // A dot per photo; tap one to jump to it.
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var i = 0; i < LoginPhotos.slides.length; i++)
+                          GestureDetector(
+                            key: ValueKey('login-dot-$i'),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              _go(i);
+                              _restart();
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(6),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 300),
+                                width: i == _index ? 24 : 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: white.withValues(alpha: i == _index ? 1 : 0.45),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 }

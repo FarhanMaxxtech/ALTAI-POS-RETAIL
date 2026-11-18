@@ -21,7 +21,30 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull); // no "overflowed" stripes
       expect(find.text('Log in'), findsWidgets);
-      expect(find.textContaining('straight from the tags'), keyboard == 0 ? findsOneWidget : findsNothing);
+      expect(find.text('Altai POS'), findsOneWidget);
+      expect(find.text('WELCOME TO'), keyboard == 0 ? findsOneWidget : findsNothing);
     });
   }
+
+  testWidgets('the photos change by themselves, and a dot jumps to one', (tester) async {
+    tester.view.physicalSize = const Size(1205, 753);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: altaiTheme(Brightness.light),
+      home: LoginScreen(auth: AuthApi(ApiClient(), SessionStore()), onLoggedIn: (_) {}),
+    ));
+    await tester.pumpAndSettle();
+    final lines = [for (final s in LoginPhotos.slides) s.$2];
+    expect(find.text(lines[0]), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+    expect(find.text(lines[1]), findsOneWidget);
+    expect(find.text(lines[0]), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('login-dot-3')));
+    await tester.pumpAndSettle();
+    expect(find.text(lines[3]), findsOneWidget);
+  });
 }

@@ -65,6 +65,7 @@ flutter:
   assets:
     - assets/sounds/
     - assets/brand/
+    - assets/login/
 
   # Altai design system fonts (SIL Open Font Licence, see assets/fonts/FONT-LICENSE-*.txt)
   fonts:

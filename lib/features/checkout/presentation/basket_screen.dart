@@ -697,44 +697,23 @@ class _BasketScreenState extends State<BasketScreen> {
 
   /// Exchange, step 2: what came back, and what to do now.
   Widget _exchangeBanner(BuildContext context, ExchangeReturn e) {
-    final c = context.altai;
     final original = CheckoutApi.cleanReceipt(e.receiptNo);
     final noReceiptYet = CheckoutApi.cleanReceipt(_basket.receiptNo).isEmpty && _basket.noReceiptReason == null;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-      decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(12)),
-      child: Row(
-        children: [
-          Icon(Icons.swap_horiz_rounded, color: c.brandInk),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Exchange · 2 of 2: new items',
-                  style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.ink),
-                ),
-                Text(
-                  '${plural(e.pieces, 'pc')} back in stock from receipt $original'
-                  '${_showPrices ? ' (RM ${formatRm(e.refundCents)})' : ''}. '
-                  'Scan the new items and enter the receipt of the new StoreHub sale.',
-                  style: AltaiType.caption.copyWith(color: c.inkMuted),
-                ),
-              ],
-            ),
-          ),
-          if (noReceiptYet)
-            TextButton(
+    return ExchangeSteps(
+      step: 2,
+      title: 'Exchange · 2 of 2: new items',
+      note: '${plural(e.pieces, 'pc')} back in stock from receipt $original. '
+          'Scan the new items, then enter the receipt of the new StoreHub sale.',
+      action: noReceiptYet
+          ? TextButton(
               onPressed: () {
                 _receipt.text = original;
                 _setReceipt(original);
               },
               style: _stripLink,
               child: const Text('Same receipt'),
-            ),
-        ],
-      ),
+            )
+          : null,
     );
   }
 
@@ -742,7 +721,7 @@ class _BasketScreenState extends State<BasketScreen> {
 
   Widget _panel(BuildContext context, List<_Line> lines, int problems, int checking) {
     final c = context.altai;
-    final returns = widget.returns;
+    final returns = _basket.exchange == null ? widget.returns : null; // no second exchange inside one
     final reason = _basket.noReceiptReason;
     final rows = [
       for (final l in lines)
@@ -820,7 +799,9 @@ class _BasketScreenState extends State<BasketScreen> {
           ),
         const SizedBox(height: 12),
         Expanded(
-          child: rows.isEmpty
+          child: _basket.exchange != null
+              ? _exchangeLines(context, _basket.exchange!, rows)
+              : rows.isEmpty
               ? Center(
                   child: Text(
                     _basket.offline
@@ -874,8 +855,11 @@ class _BasketScreenState extends State<BasketScreen> {
         const SizedBox(height: 12),
         PanelRow('Pieces', piecesText),
         if (problems > 0) PanelRow('Needs attention', '$problems', valueColor: c.danger),
-        if (_basket.exchange case final e? when _showPrices) PanelRow('Returned', '- RM ${formatRm(e.refundCents)}'),
-        if (_showPrices || _basket.items.isEmpty)
+        if (_basket.exchange case final e? when _showPrices) ...[
+          PanelRow('New items', 'RM ${formatRm(_basket.totalCents)}'),
+          PanelRow('Coming back', '- RM ${formatRm(e.refundCents)}'),
+          _differenceTotal(_basket.totalCents - e.refundCents),
+        ] else if (_showPrices || _basket.items.isEmpty)
           PanelTotal('Total', 'RM ${formatRm(_showPrices ? _basket.totalCents : 0)}'),
         if (unpriced > 0)
           Text(
@@ -907,6 +891,61 @@ class _BasketScreenState extends State<BasketScreen> {
           confirm: _basket.isChecking ? 'Checking…' : 'Confirm',
           onConfirm: _basket.canComplete ? () => _confirm(lines) : null,
         ),
+      ],
+    );
+  }
+
+  /// "Customer pays RM 30.00", "Refund RM 20.00" or "Difference RM 0.00".
+  Widget _differenceTotal(int diff) => PanelTotal(
+    diff > 0 ? 'Customer pays' : (diff < 0 ? 'Refund' : 'Difference'),
+    'RM ${formatRm(diff.abs())}',
+  );
+
+  /// Step 2 of an exchange: what came back (from step 1), then the new items.
+  Widget _exchangeLines(BuildContext context, ExchangeReturn e, List<(_Line, _Variant)> rows) {
+    final c = context.altai;
+    Widget heading(String text) => Padding(
+      padding: const EdgeInsets.fromLTRB(2, 6, 2, 4),
+      child: Text(text, style: AltaiType.caption.copyWith(fontSize: 13, fontWeight: FontWeight.w600, color: c.inkMuted)),
+    );
+    return ListView(
+      children: [
+        heading('Coming back'),
+        for (final (i, item) in e.items.indexed)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: PanelLine(
+              key: ValueKey('back-${item.sku ?? item.name}'),
+              qty: item.pieces,
+              name: item.name,
+              detail: item.variation,
+              amount: !_showPrices ? null : (item.cents == null ? '–' : '- ${formatRm(item.cents!)}'),
+              shaded: i.isEven,
+            ),
+          ),
+        if (e.items.isEmpty) PanelLine(qty: e.pieces, name: plural(e.pieces, 'piece'), shaded: true),
+        heading('New items'),
+        if (rows.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              'Scan the new items',
+              textAlign: TextAlign.center,
+              style: AltaiType.label.copyWith(color: c.inkMuted),
+            ),
+          ),
+        for (final (i, (l, v)) in rows.indexed)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: PanelLine(
+              key: ValueKey('line-${v.sku}'),
+              qty: v.qty,
+              name: l.first.productName ?? v.sku,
+              detail: v.first.variation,
+              amount: !_showPrices ? null : (_cents(v) == null ? '–' : formatRm(_cents(v)!)),
+              shaded: i.isEven,
+            ),
+          ),
       ],
     );
   }

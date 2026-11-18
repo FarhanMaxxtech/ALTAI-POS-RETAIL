@@ -148,11 +148,36 @@ class _ReturnScreenState extends State<ReturnScreen> {
         pieces: _return.pieceCount,
         refundCents: _showPrices ? _return.refundCents : 0,
         trxId: _return.trxId ?? '',
+        items: _cameBack(),
       );
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) Navigator.of(context).pop(result);
       });
     }
+  }
+
+  /// What came back, one entry per SKU, for step 2 of the exchange.
+  List<ExchangeItem> _cameBack() {
+    final bySku = <String, ({BasketItem first, int pieces, int? cents})>{};
+    for (final i in _return.items) {
+      if (i.state != ItemState.ok) continue;
+      final key = i.sku ?? i.epc;
+      final unit = toCents(_return.priceOf(i));
+      final pcs = _return.pcsOf(i);
+      final old = bySku[key];
+      final cents = unit == null || (old != null && old.cents == null) ? null : (old?.cents ?? 0) + unit * pcs;
+      bySku[key] = (first: old?.first ?? i, pieces: (old?.pieces ?? 0) + pcs, cents: _showPrices ? cents : null);
+    }
+    return [
+      for (final e in bySku.values)
+        ExchangeItem(
+          name: e.first.productName ?? e.first.sku ?? 'Unknown item',
+          variation: e.first.variation,
+          sku: e.first.sku,
+          pieces: e.pieces,
+          cents: e.cents,
+        ),
+    ];
   }
 
   /// The receipt typed is the last 4 digits (or all 16) of an order: find it among the completed
@@ -339,19 +364,10 @@ class _ReturnScreenState extends State<ReturnScreen> {
           ),
           if (widget.exchange) ...[
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(12)),
-              child: Row(
-                children: [
-                  Icon(Icons.swap_horiz_rounded, color: c.brandInk),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text('Exchange · 1 of 2: items back',
-                        style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.ink)),
-                  ),
-                ],
-              ),
+            const ExchangeSteps(
+              step: 1,
+              title: 'Exchange · 1 of 2: items back',
+              note: 'Scan what the customer brings back. Next, the new items they take.',
             ),
           ],
           if (_reader.error != null) ...[const SizedBox(height: 12), ReaderProblem(session: _reader)],

@@ -8,12 +8,27 @@ class ExchangeReturn {
     required this.pieces,
     required this.refundCents,
     required this.trxId,
+    this.items = const [],
   });
 
   final String receiptNo; // the original sale's receipt, as entered
   final int pieces; // items back in stock
   final int refundCents; // their team price; 0 when prices aren't shown
   final String trxId; // the return's adjustment
+
+  /// What came back, one entry per SKU: shown next to the new items in step 2.
+  final List<ExchangeItem> items;
+}
+
+/// One SKU that came back in an exchange.
+class ExchangeItem {
+  const ExchangeItem({required this.name, required this.pieces, this.variation, this.sku, this.cents});
+
+  final String name;
+  final String? variation;
+  final String? sku;
+  final int pieces;
+  final int? cents; // all its pieces, at the team price; null = no price
 }
 
 /// "Customer pays RM 30.00 more on StoreHub" / "Refund RM 20.00 on StoreHub" / "No money changes hands".

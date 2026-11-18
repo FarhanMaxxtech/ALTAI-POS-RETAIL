@@ -135,11 +135,16 @@ void main() {
 
     // Step 2: back on checkout, for the new items.
     expect(find.text('Exchange · 2 of 2: new items'), findsOneWidget);
+    // The panel keeps what came back in view, above the new items.
+    expect(find.text('Coming back'), findsWidgets);
+    expect(find.text('Scan the new items'), findsOneWidget);
     await tester.tap(find.text('Same receipt'));
     await tester.pump();
     await scanWithReader(tester, reader, ['B2801160000000B1']);
     await tester.pumpAndSettle();
     expect(find.text('Customer pays RM 10.00 more on StoreHub'), findsOneWidget);
+    expect(find.text('Customer pays'), findsOneWidget); // the total: new items less what came back
+    expect(find.text('RM 10.00'), findsOneWidget);
 
     await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();

@@ -1135,3 +1135,64 @@ class ColumnTitle extends StatelessWidget {
   Widget build(BuildContext context) =>
       Text(text, style: AltaiType.caption.copyWith(fontSize: 13, fontWeight: FontWeight.w600, color: context.altai.inkMuted));
 }
+
+/// The two steps of an exchange, over the cards: 1 items coming back, 2 new items.
+class ExchangeSteps extends StatelessWidget {
+  const ExchangeSteps({super.key, required this.step, required this.title, required this.note, this.action});
+
+  final int step; // 1 or 2
+  final String title;
+  final String note;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.altai;
+    Widget dot(int n, String label) {
+      final done = n < step, now = n == step;
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircleAvatar(
+            radius: 13,
+            backgroundColor: done || now ? c.brand : c.surfaceRaised,
+            child: done
+                ? Icon(Icons.check_rounded, size: 16, color: c.onBrand)
+                : Text('$n',
+                    style: AltaiType.caption.copyWith(
+                        fontWeight: FontWeight.w700, color: now ? c.onBrand : c.inkMuted)),
+          ),
+          const SizedBox(width: 6),
+          Text(label,
+              style: AltaiType.caption.copyWith(
+                  fontWeight: now ? FontWeight.w700 : FontWeight.w500, color: now ? c.brandInk : c.inkMuted)),
+        ],
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(12)),
+      child: Row(
+        children: [
+          Icon(Icons.swap_horiz_rounded, color: c.brandInk),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.ink)),
+                Text(note, style: AltaiType.caption.copyWith(color: c.inkMuted)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          dot(1, 'Items back'),
+          Container(width: 24, height: 2, margin: const EdgeInsets.symmetric(horizontal: 8), color: c.brandBorder),
+          dot(2, 'New items'),
+          if (action != null) ...[const SizedBox(width: 8), action!],
+        ],
+      ),
+    );
+  }
+}

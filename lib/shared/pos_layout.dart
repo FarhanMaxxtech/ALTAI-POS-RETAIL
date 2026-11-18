@@ -17,6 +17,7 @@ enum Section {
   checkout('Checkout', Icons.shopping_bag_outlined),
   returns('Return', Icons.assignment_return_outlined),
   orders('Orders', Icons.receipt_long_outlined),
+  history('History', Icons.manage_history_rounded),
   recent('Recent', Icons.history_rounded),
   settings('Settings', Icons.settings_outlined);
 

@@ -48,6 +48,7 @@ class BasketScreen extends StatefulWidget {
     this.tagReader = const UsbTagReader(),
     this.storeTags,
     this.onSold,
+    this.initialExchange,
   });
 
   final CheckoutApi api;
@@ -82,6 +83,9 @@ class BasketScreen extends StatefulWidget {
 
   /// A sale was recorded, with this many pieces (for the start page's "Pieces sold").
   final void Function(int pieces)? onSold;
+
+  /// Exchange started from the order history: the items are already back, now the new ones.
+  final ExchangeReturn? initialExchange;
 
   @override
   State<BasketScreen> createState() => _BasketScreenState();
@@ -142,6 +146,7 @@ class _BasketScreenState extends State<BasketScreen> {
     _basket.findByEnding = widget.orders != null; // today's StoreHub sales can be searched
     _basket.addListener(_onBasketChanged);
     _reader.addListener(_onReaderChanged);
+    if (widget.initialExchange case final e?) _basket.startExchange(e);
     if (widget.initialTags.isNotEmpty) _basket.addText(widget.initialTags.join(' '));
     _reader.start();
   }

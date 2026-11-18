@@ -10,6 +10,7 @@ import '../checkout/data/store_tags.dart';
 import '../checkout/presentation/basket_screen.dart';
 import '../checkout/presentation/recent_screen.dart';
 import '../orders/data/orders_api.dart';
+import '../orders/presentation/order_history_screen.dart';
 import '../orders/presentation/orders_screen.dart';
 import '../returns/data/returns_api.dart';
 import '../returns/presentation/return_screen.dart';
@@ -57,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
     hidden: {
       if (widget.returns == null) Section.returns,
       if (widget.orders == null) Section.orders,
+      if (widget.orders == null) Section.history,
     },
   );
 
@@ -160,6 +162,21 @@ class _HomeScreenState extends State<HomeScreen> {
           storeName: widget.storeName,
           staffName: widget.staffName,
           tagReader: widget.tagReader,
+        ));
+      case Section.history when orders != null:
+        _push(OrderHistoryScreen(
+          orders: orders,
+          inspector: widget.api,
+          storeId: widget.storeId,
+          storeName: widget.storeName,
+          staffName: widget.staffName,
+          returns: widget.returns,
+          catalog: widget.catalog,
+          storeTags: widget.storeTags,
+          tagReader: widget.tagReader,
+          onReturned: _returned,
+          onSold: _sold,
+          clock: widget.clock,
         ));
       case Section.recent:
         _push(RecentScreen(

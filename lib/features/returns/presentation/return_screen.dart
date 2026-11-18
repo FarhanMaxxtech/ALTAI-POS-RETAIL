@@ -35,6 +35,7 @@ class ReturnScreen extends StatefulWidget {
     this.exchange = false,
     this.tagReader = const UsbTagReader(),
     this.onReturned,
+    this.initialReceipt,
   });
 
   final CheckoutApi inspector;
@@ -52,6 +53,9 @@ class ReturnScreen extends StatefulWidget {
 
   /// A return went through, with this many pieces (for the start page's "Returns today").
   final void Function(int pieces)? onReturned;
+
+  /// The order picked in the order history: its receipt no. is filled in.
+  final String? initialReceipt;
 
   @override
   State<ReturnScreen> createState() => _ReturnScreenState();
@@ -79,6 +83,10 @@ class _ReturnScreenState extends State<ReturnScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialReceipt case final r?) {
+      _receipt.text = r;
+      _return.setReceipt(r);
+    }
     _return.addListener(_onChanged);
     _reader.addListener(_onReaderChanged);
     _reader.start();

@@ -14,6 +14,10 @@ abstract class OrdersApi {
 
   /// The cashier scanned every tagged item: the server marks [epcs] Sold, linked to the order.
   Future<void> complete(StoreHubOrder order, List<String> epcs, {required String staffName});
+
+  /// Order history: this store's completed orders paid from [from] up to [to] (both included),
+  /// newest first. Where returns and exchanges start.
+  Future<List<StoreHubOrder>> history(String storeId, {required DateTime from, required DateTime to});
 }
 
 /// Made-up orders, so the screens can be tried before the server is ready. Nothing is sent anywhere.
@@ -65,6 +69,36 @@ class FakeOrdersApi implements OrdersApi {
         ],
       ),
     ]);
+    // Done orders for the order history: today, yesterday and earlier this week.
+    StoreHubOrder done(int n, Duration ago, List<OrderLine> lines) {
+      final paid = now.subtract(ago);
+      return StoreHubOrder(
+        refId: 'demo-done-$n',
+        invoiceNumber: demoReceiptNo(paid, n),
+        storeId: storeId,
+        registerId: '1',
+        paidAt: paid,
+        lines: lines,
+        status: OrderStatus.completed,
+      );
+    }
+
+    _orders.addAll([
+      done(3, const Duration(hours: 1, minutes: 12), const [
+        OrderLine(sku: 'CT-BLK-M', name: 'Classic Tee', variation: 'Black / M', qty: 1),
+        OrderLine(sku: 'JN-32', name: 'Slim Jeans', variation: '32', qty: 1),
+      ]),
+      done(4, const Duration(hours: 3, minutes: 40), const [
+        OrderLine(sku: 'CT-BLK-L', name: 'Classic Tee', variation: 'Black / L', qty: 3),
+      ]),
+      done(5, const Duration(days: 1, hours: 2), const [
+        OrderLine(sku: 'JN-32', name: 'Slim Jeans', variation: '32', qty: 2),
+        OrderLine(sku: 'BAG-PAPER', name: 'Paper bag', qty: 1, exempt: true),
+      ]),
+      done(6, const Duration(days: 3, hours: 5), const [
+        OrderLine(sku: 'CT-BLK-M', name: 'Classic Tee', variation: 'Black / M', qty: 1),
+      ]),
+    ]);
   }
 
   @override
@@ -82,6 +116,20 @@ class FakeOrdersApi implements OrdersApi {
     final i = _orders.indexWhere((o) => o.refId == order.refId);
     if (i >= 0) _orders[i] = _orders[i].withStatus(OrderStatus.completed);
     completed.add((refId: order.refId, epcs: epcs));
+  }
+
+  @override
+  Future<List<StoreHubOrder>> history(String storeId, {required DateTime from, required DateTime to}) async {
+    await Future<void>.delayed(delay);
+    _seed(storeId);
+    return _orders
+        .where((o) =>
+            o.storeId == storeId &&
+            o.status == OrderStatus.completed &&
+            !o.paidAt.isBefore(from) &&
+            !o.paidAt.isAfter(to))
+        .toList()
+      ..sort((a, b) => b.paidAt.compareTo(a.paidAt));
   }
 
   /// A demo order with one line per SKU of the [tags] read (inspector results with `sku`,

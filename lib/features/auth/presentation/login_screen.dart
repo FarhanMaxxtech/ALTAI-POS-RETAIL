@@ -130,23 +130,43 @@ class _LoginScreenState extends State<LoginScreen> {
           colors: [c.logoGreenTop, c.logoGreenBottom],
         ),
       ),
-      padding: const EdgeInsets.all(64),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const AltaiLogo(height: 72, full: true),
-          const Spacer(),
-          Text(
-            'Checkout and returns,\nstraight from the tags.',
-            style: AltaiType.title.copyWith(fontSize: 40, height: 1.25, fontWeight: FontWeight.w700, color: c.onLogoGreen),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Put the items near the reader. Altai POS does the rest.',
-            style: AltaiType.body.copyWith(color: c.onLogoGreen.withValues(alpha: 0.85)),
-          ),
-          const SizedBox(height: 64),
-        ],
+      // With the keyboard up there's little height left: then only the logo shows.
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final roomy = box.maxHeight >= 520;
+          return Padding(
+            padding: EdgeInsets.all(roomy ? 64 : 40),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AltaiLogo(height: roomy ? 72 : 56, full: true),
+                if (roomy) ...[
+                  const Spacer(),
+                  // Two lines, made a little smaller rather than wrapping on a narrow panel.
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Checkout and returns,\nstraight from the tags.',
+                      style: AltaiType.title.copyWith(
+                        fontSize: 40,
+                        height: 1.25,
+                        fontWeight: FontWeight.w700,
+                        color: c.onLogoGreen,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Put the items near the reader. Altai POS does the rest.',
+                    style: AltaiType.body.copyWith(color: c.onLogoGreen.withValues(alpha: 0.85)),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ],
+            ),
+          );
+        },
       ),
     );
 

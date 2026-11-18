@@ -1,6 +1,7 @@
 import 'package:altai_pos/features/orders/data/orders_api.dart';
 import 'package:altai_pos/features/orders/presentation/order_history_screen.dart';
 import 'package:altai_pos/features/returns/data/returns_api.dart';
+import 'package:altai_pos/features/returns/presentation/return_screen.dart';
 import 'package:altai_pos/shared/altai_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -81,7 +82,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600)); // no settling: the return screen reads
     expect(find.text('Return items'), findsOneWidget);
-    expect(tester.widget<TextField>(find.byKey(const ValueKey('receipt-field'))).controller!.text, r);
+    expect(find.text('Order $r'), findsOneWidget); // the order, not a receipt box
+    expect(find.byKey(const ValueKey('order-line-CT-BLK-M')), findsOneWidget); // its items, 0 coming back yet
+    expect(find.text('0 / 1'), findsNWidgets(2));
   });
 
   testWidgets('tap an order: its items, with Return and Exchange', (tester) async {
@@ -95,5 +98,35 @@ void main() {
     await tester.tap(find.text('Close'));
     await tester.pumpAndSettle();
     expect(find.text('Order $r'), findsNothing);
+  });
+
+  testWidgets('Return without an order: the last 4 digits find it', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = FakeOrdersApi(clock: DateTime.now, delay: Duration.zero);
+    final done = (await tester.runAsync(
+      () => api.history('12', from: DateTime.now().subtract(const Duration(days: 1)), to: DateTime.now()),
+    ))!.first;
+    await tester.pumpWidget(MaterialApp(
+      theme: altaiTheme(Brightness.light),
+      home: ReturnScreen(
+        inspector: FakeApi(),
+        api: ReturnsApi(FakeTeam().api),
+        storeId: '12',
+        storeName: 'MidValley',
+        staffName: 'Aina',
+        orders: api,
+        tagReader: FakeTagReader(),
+      ),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byKey(const ValueKey('receipt-field')), done.invoiceNumber.substring(12));
+    await tester.pump();
+    await tester.tap(find.text('Find'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Order ${done.invoiceNumber}'), findsOneWidget);
+    expect(find.text('Change'), findsOneWidget); // found here, so another order can be picked
   });
 }

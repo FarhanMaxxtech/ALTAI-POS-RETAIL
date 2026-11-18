@@ -18,6 +18,10 @@ abstract class OrdersApi {
   /// Order history: this store's completed orders paid from [from] up to [to] (both included),
   /// newest first. Where returns and exchanges start.
   Future<List<StoreHubOrder>> history(String storeId, {required DateTime from, required DateTime to});
+
+  /// A return on [order] went through: [pieces] (SKU → pieces) on [epcs] came back, so they can't
+  /// come back again on this order.
+  Future<void> recordReturn(StoreHubOrder order, Map<String, int> pieces, List<String> epcs);
 }
 
 /// Made-up orders, so the screens can be tried before the server is ready. Nothing is sent anywhere.
@@ -114,7 +118,7 @@ class FakeOrdersApi implements OrdersApi {
   Future<void> complete(StoreHubOrder order, List<String> epcs, {required String staffName}) async {
     await Future<void>.delayed(delay);
     final i = _orders.indexWhere((o) => o.refId == order.refId);
-    if (i >= 0) _orders[i] = _orders[i].withStatus(OrderStatus.completed);
+    if (i >= 0) _orders[i] = _orders[i].withStatus(OrderStatus.completed, soldEpcs: epcs);
     completed.add((refId: order.refId, epcs: epcs));
   }
 
@@ -130,6 +134,13 @@ class FakeOrdersApi implements OrdersApi {
             !o.paidAt.isAfter(to))
         .toList()
       ..sort((a, b) => b.paidAt.compareTo(a.paidAt));
+  }
+
+  @override
+  Future<void> recordReturn(StoreHubOrder order, Map<String, int> pieces, List<String> epcs) async {
+    await Future<void>.delayed(delay);
+    final i = _orders.indexWhere((o) => o.refId == order.refId);
+    if (i >= 0) _orders[i] = _orders[i].withReturn(pieces, epcs);
   }
 
   /// A demo order with one line per SKU of the [tags] read (inspector results with `sku`,

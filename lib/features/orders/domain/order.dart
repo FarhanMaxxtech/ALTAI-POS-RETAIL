@@ -37,6 +37,9 @@ class StoreHubOrder {
     required this.paidAt,
     required this.lines,
     this.status = OrderStatus.pendingScan,
+    this.soldEpcs = const [],
+    this.returned = const {},
+    this.returnedEpcs = const {},
   });
 
   final String refId; // StoreHub's unique id, used to avoid duplicates
@@ -47,6 +50,15 @@ class StoreHubOrder {
   final List<OrderLine> lines;
   final OrderStatus status;
 
+  /// The tags scanned out on this order. Empty when unknown: then a return matches by SKU only.
+  final List<String> soldEpcs;
+
+  /// Pieces already returned, per SKU.
+  final Map<String, int> returned;
+
+  /// Tags already returned on this order.
+  final Set<String> returnedEpcs;
+
   /// Pieces that need a tag scanned.
   int get taggedQty => lines.where((l) => !l.exempt).fold(0, (sum, l) => sum + l.qty);
 
@@ -55,7 +67,7 @@ class StoreHubOrder {
   /// Unscanned for too long: the customer may have walked out without the scan (the gate alarms).
   bool isLate(DateTime now, {Duration after = const Duration(minutes: 10)}) => now.difference(paidAt) > after;
 
-  StoreHubOrder withStatus(OrderStatus s) => StoreHubOrder(
+  StoreHubOrder withStatus(OrderStatus s, {List<String>? soldEpcs}) => StoreHubOrder(
     refId: refId,
     invoiceNumber: invoiceNumber,
     storeId: storeId,
@@ -63,7 +75,33 @@ class StoreHubOrder {
     paidAt: paidAt,
     lines: lines,
     status: s,
+    soldEpcs: soldEpcs ?? this.soldEpcs,
+    returned: returned,
+    returnedEpcs: returnedEpcs,
   );
+
+  /// The order after a return of [pieces] (SKU → pieces) on [epcs].
+  StoreHubOrder withReturn(Map<String, int> pieces, Iterable<String> epcs) => StoreHubOrder(
+    refId: refId,
+    invoiceNumber: invoiceNumber,
+    storeId: storeId,
+    registerId: registerId,
+    paidAt: paidAt,
+    lines: lines,
+    status: status,
+    soldEpcs: soldEpcs,
+    returned: {
+      ...returned,
+      for (final e in pieces.entries) e.key: (returned[e.key] ?? 0) + e.value,
+    },
+    returnedEpcs: {...returnedEpcs, ...epcs},
+  );
+
+  /// Pieces of [sku] that can still come back on this order (0 when it isn't on it).
+  int returnableQty(String? sku) {
+    final line = lines.where((l) => l.sku == sku && !l.exempt).firstOrNull;
+    return line == null ? 0 : (line.qty - (returned[sku] ?? 0)).clamp(0, line.qty);
+  }
 }
 
 /// Why a scanned tag can't go on this order. Null = it fits.
@@ -74,6 +112,21 @@ String? rejectReason(StoreHubOrder order, String? sku, int alreadyScanned) {
   if (sku == null || line == null) return 'Not in this order';
   if (line.exempt) return 'This item needs no scan';
   if (alreadyScanned >= line.qty) return 'Order has only ${line.qty} of this';
+  return null;
+}
+
+/// Why a scanned tag can't come back on this order. Null = it fits.
+///
+/// [sku] is the tag's SKU, [alreadyComing] how many pieces of that SKU are already coming back in
+/// this return.
+String? returnRejectReason(StoreHubOrder order, {required String epc, String? sku, required int alreadyComing}) {
+  if (order.returnedEpcs.contains(epc)) return 'Already returned on this order';
+  if (order.soldEpcs.isNotEmpty && !order.soldEpcs.contains(epc)) return 'Not sold on this order';
+  final line = order.lines.where((l) => l.sku == sku && !l.exempt).firstOrNull;
+  if (sku == null || line == null) return 'Not in this order';
+  final left = order.returnableQty(sku);
+  if (left == 0) return 'All ${line.qty} already returned';
+  if (alreadyComing >= left) return 'Order has only $left of this to return';
   return null;
 }
 

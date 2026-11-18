@@ -11,6 +11,8 @@ import '../../../shared/rfid_reader.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../checkout/data/checkout_api.dart';
 import '../../checkout/domain/basket.dart';
+import '../../orders/data/orders_api.dart';
+import '../../orders/domain/order.dart';
 import '../data/returns_api.dart';
 import '../domain/exchange.dart';
 import '../domain/return_controller.dart';
@@ -36,6 +38,8 @@ class ReturnScreen extends StatefulWidget {
     this.tagReader = const UsbTagReader(),
     this.onReturned,
     this.initialReceipt,
+    this.order,
+    this.orders,
   });
 
   final CheckoutApi inspector;
@@ -57,6 +61,13 @@ class ReturnScreen extends StatefulWidget {
   /// The order picked in the order history: its receipt no. is filled in.
   final String? initialReceipt;
 
+  /// The order the items come back on (picked in the order history): each tag is checked against it.
+  final StoreHubOrder? order;
+
+  /// Completed StoreHub orders: lets the cashier find the order by its last 4 digits, and is told
+  /// what came back. Null = no order lookup.
+  final OrdersApi? orders;
+
   @override
   State<ReturnScreen> createState() => _ReturnScreenState();
 }
@@ -67,7 +78,8 @@ class _ReturnScreenState extends State<ReturnScreen> {
       api: widget.api,
       storeId: widget.storeId,
       staffName: widget.staffName,
-      catalog: widget.catalog);
+      catalog: widget.catalog,
+      order: widget.order);
   final _receipt = TextEditingController();
   final _beeper = Beeper();
   late final ReaderSession _reader =
@@ -83,6 +95,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.order case final o?) _receipt.text = o.invoiceNumber;
     if (widget.initialReceipt case final r?) {
       _receipt.text = r;
       _return.setReceipt(r);
@@ -118,8 +131,13 @@ class _ReturnScreenState extends State<ReturnScreen> {
     // Back to scanning (a new return, or the submit didn't go through): read again.
     final phase = _return.phase;
     if (phase != _lastPhase && phase == ReturnPhase.scanning && !_pausedNow) _reader.start();
-    if (phase != _lastPhase && phase == ReturnPhase.done && !widget.exchange) {
-      widget.onReturned?.call(_return.pieceCount);
+    if (phase != _lastPhase && phase == ReturnPhase.done) {
+      if (!widget.exchange) widget.onReturned?.call(_return.pieceCount);
+      // The order remembers what came back, so the same pieces can't come back on it again.
+      if ((_return.order, widget.orders) case (final o?, final api?)) {
+        final epcs = [for (final i in _return.items) if (i.state == ItemState.ok) i.epc];
+        api.recordReturn(o, _return.piecesBySku, epcs).catchError((_) {});
+      }
     }
     _lastPhase = phase;
 
@@ -135,6 +153,63 @@ class _ReturnScreenState extends State<ReturnScreen> {
         if (mounted) Navigator.of(context).pop(result);
       });
     }
+  }
+
+  /// The receipt typed is the last 4 digits (or all 16) of an order: find it among the completed
+  /// orders of the last 30 days.
+  bool get _canFind {
+    final no = _receipt.text.replaceAll(RegExp(r'\s'), '');
+    return widget.orders != null && _return.order == null && RegExp(r'^(\d{4}|\d{16})$').hasMatch(no);
+  }
+
+  Future<void> _findOrder() async {
+    final api = widget.orders;
+    final no = _receipt.text.replaceAll(RegExp(r'\s'), '');
+    if (api == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final now = DateTime.now();
+    List<StoreHubOrder> found;
+    try {
+      final recent = await api.history(widget.storeId, from: now.subtract(const Duration(days: 30)), to: now);
+      found = [for (final o in recent) if (o.invoiceNumber.endsWith(no)) o];
+    } catch (_) {
+      messenger.showSnackBar(const SnackBar(content: Text('Could not load the orders. Check the connection.')));
+      return;
+    }
+    if (!mounted) return;
+    if (found.isEmpty) {
+      messenger.showSnackBar(SnackBar(content: Text('No completed order in the last 30 days ending in $no.')));
+      return;
+    }
+    final pick = found.length == 1 ? found.single : await _chooseOrder(found, no);
+    if (pick == null || !mounted) return;
+    _receipt.text = pick.invoiceNumber;
+    _return.useOrder(pick);
+  }
+
+  Future<StoreHubOrder?> _chooseOrder(List<StoreHubOrder> found, String no) {
+    final c = context.altai;
+    String two(int v) => v.toString().padLeft(2, '0');
+    return showDialog<StoreHubOrder>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Orders ending in $no', style: AltaiType.heading.copyWith(color: c.ink)),
+        children: [
+          for (final o in found)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(o),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: D.space2),
+                child: Text(
+                  '${o.invoiceNumber} · ${two(o.paidAt.day)}/${two(o.paidAt.month)} '
+                  '${two(o.paidAt.hour)}:${two(o.paidAt.minute)} · ${plural(o.totalQty, 'pc')}',
+                  style: AltaiType.body.copyWith(color: c.ink),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   void _newReturn() {
@@ -410,23 +485,49 @@ class _ReturnScreenState extends State<ReturnScreen> {
 
   /* ---------------- The panel on the right ---------------- */
 
+
   Widget _panel(BuildContext context) {
     final c = context.altai;
     final ok = _return.items.reversed.where((i) => i.state == ItemState.ok).toList();
     final problems = _return.items.where((i) => i.state == ItemState.problem).length;
+    final order = _return.order;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ReceiptField(
-          controller: _receipt,
-          label: 'StoreHub receipt no.',
-          hint: 'Receipt no., order no. or ID',
-          keyboardType: TextInputType.text,
-          onChanged: _return.setReceipt,
-        ),
+        if (order != null)
+          _OrderBox(
+            order: order,
+            onChange: widget.order == null && widget.orders != null
+                ? () {
+                    _receipt.clear();
+                    _return.setReceipt('');
+                    _return.useOrder(null);
+                  }
+                : null,
+          )
+        else
+          ReceiptField(
+            controller: _receipt,
+            label: 'StoreHub receipt no.',
+            hint: widget.orders == null ? 'Receipt no., order no. or ID' : 'Last 4 digits, or the whole receipt no.',
+            keyboardType: TextInputType.text,
+            onChanged: _return.setReceipt,
+            onSubmitted: (_) {
+              if (_canFind) _findOrder();
+            },
+            ok: _canFind ? 'Tap Find to look up the order' : null,
+            suffix: _canFind
+                ? Padding(
+                    padding: const EdgeInsets.only(right: D.space1),
+                    child: TextButton(onPressed: _findOrder, child: const Text('Find')),
+                  )
+                : null,
+          ),
         const SizedBox(height: 12),
         Expanded(
-          child: ok.isEmpty
+          child: order != null
+              ? _orderLines(context, order)
+              : ok.isEmpty
               ? Center(
                   child: Text(
                     _return.offline
@@ -474,6 +575,66 @@ class _ReturnScreenState extends State<ReturnScreen> {
           onConfirm: _return.canSubmit ? _confirm : null,
         ),
       ],
+    );
+  }
+
+
+  /// The order's items, each with how many are coming back now: the matched ones are green.
+  Widget _orderLines(BuildContext context, StoreHubOrder order) {
+    final c = context.altai;
+    final coming = _return.piecesBySku;
+    final lines = order.lines.where((l) => !l.exempt).toList();
+    return ListView.separated(
+      itemCount: lines.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
+      itemBuilder: (context, n) {
+        final l = lines[n];
+        final now = coming[l.sku] ?? 0;
+        final before = order.returned[l.sku] ?? 0;
+        final left = order.returnableQty(l.sku);
+        return Container(
+          key: ValueKey('order-line-${l.sku}'),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: now > 0 ? c.brandTint : c.surfaceSunken,
+            borderRadius: BorderRadius.circular(10),
+            border: now > 0 ? Border.all(color: c.brandBorder) : null,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                now > 0 ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                size: 20,
+                color: now > 0 ? c.brandInk : c.inkMuted,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(l.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AltaiType.label.copyWith(
+                            fontWeight: FontWeight.w600, color: left == 0 ? c.inkMuted : c.ink)),
+                    Text(
+                      [?l.variation, if (before > 0) '$before returned before'].join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AltaiType.caption.copyWith(fontSize: 13, color: c.inkMuted),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '$now / $left',
+                style: AltaiType.label.copyWith(fontWeight: FontWeight.w700, color: now > 0 ? c.brandInk : c.inkMuted),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -665,6 +826,53 @@ class _Problem extends StatelessWidget {
             AltaiButton('Try again', onPressed: onRetry, variant: AltaiButtonVariant.primary, large: true),
           ]),
         ),
+      ),
+    );
+  }
+}
+
+/// The order the items come back on, at the top of the panel.
+class _OrderBox extends StatelessWidget {
+  const _OrderBox({required this.order, this.onChange});
+
+  final StoreHubOrder order;
+  final VoidCallback? onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.altai;
+    String two(int v) => v.toString().padLeft(2, '0');
+    final t = order.paidAt;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+      decoration: BoxDecoration(
+        color: c.brandTint,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.brand, width: 1.5),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.receipt_long_outlined, color: c.brandInk),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Order ${order.invoiceNumber}',
+                    key: const ValueKey('return-order'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AltaiType.label.copyWith(fontWeight: FontWeight.w700, color: c.ink)),
+                Text(
+                  'Paid ${two(t.day)}/${two(t.month)}/${t.year} ${two(t.hour)}:${two(t.minute)} · '
+                  '${plural(order.totalQty, 'pc')}',
+                  style: AltaiType.caption.copyWith(fontSize: 13, color: c.brandInk),
+                ),
+              ],
+            ),
+          ),
+          if (onChange != null) TextButton(onPressed: onChange, child: const Text('Change')),
+        ],
       ),
     );
   }

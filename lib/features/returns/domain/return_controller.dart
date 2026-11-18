@@ -6,6 +6,7 @@ import '../../../core/api_client.dart';
 import '../../catalog/data/catalog_api.dart';
 import '../../checkout/data/checkout_api.dart';
 import '../../checkout/domain/basket.dart';
+import '../../orders/domain/order.dart';
 import '../data/returns_api.dart';
 import '../../../shared/reading_time.dart';
 
@@ -59,7 +60,11 @@ class ReturnController extends ChangeNotifier {
     this.catalog,
     this.checkDelay = const Duration(milliseconds: 250),
     this.retryDelay = const Duration(seconds: 3),
-  }) : _clientRef = newClientRef();
+    StoreHubOrder? order,
+  }) : _clientRef = newClientRef(),
+       _order = order {
+    if (order != null) receiptNo = order.invoiceNumber;
+  }
 
   static const maxItems = 200;
 
@@ -144,6 +149,51 @@ class ReturnController extends ChangeNotifier {
   Timer? _messageTimer;
   String receiptNo = '';
   String? reason;
+
+  /// The StoreHub order the items come back on (picked in the order history, or found by its last
+  /// 4 digits). Each tag is checked against it. Null = any sold tag can come back.
+  StoreHubOrder? get order => _order;
+  StoreHubOrder? _order;
+
+  /// Returns on [o] from now on (null = no order). Its receipt no. is used, and the items already
+  /// read are checked again against it.
+  void useOrder(StoreHubOrder? o) {
+    if (phase != ReturnPhase.scanning) return;
+    _order = o;
+    if (o != null) receiptNo = o.invoiceNumber;
+    _cancelProblemTimers();
+    for (final i in _items.values.toList()) {
+      _items[i.epc] = BasketItem(i.epc);
+    }
+    if (_items.isNotEmpty) _scheduleCheck();
+    notifyListeners();
+  }
+
+  /// Pieces of each SKU coming back in this return.
+  Map<String, int> get piecesBySku {
+    final out = <String, int>{};
+    for (final i in _items.values) {
+      if (i.state == ItemState.ok && i.sku != null) out[i.sku!] = (out[i.sku!] ?? 0) + pcsOf(i);
+    }
+    return out;
+  }
+
+  /// A tag that's fine on its own, checked against the order: red when it isn't on it.
+  BasketItem _againstOrder(BasketItem item) {
+    final o = _order;
+    if (o == null || item.state != ItemState.ok) return item;
+    final why = returnRejectReason(o, epc: item.epc, sku: item.sku, alreadyComing: piecesBySku[item.sku] ?? 0);
+    if (why == null) return item;
+    return BasketItem(
+      item.epc,
+      state: ItemState.problem,
+      problem: why,
+      productName: item.productName,
+      variation: item.variation,
+      sku: item.sku,
+      multiplier: item.multiplier,
+    );
+  }
   String? trxId; // set once saved
 
   List<BasketItem> get items => _items.values.toList(growable: false);
@@ -162,7 +212,11 @@ class ReturnController extends ChangeNotifier {
       item.multiplier > 1 ? (_pcs[item.epc] ?? 1).clamp(1, item.multiplier) : 1;
 
   bool canAddPc(BasketItem item) =>
-      phase == ReturnPhase.scanning && item.state == ItemState.ok && pcsOf(item) < item.multiplier;
+      phase == ReturnPhase.scanning &&
+      item.state == ItemState.ok &&
+      pcsOf(item) < item.multiplier &&
+      // On an order: no more pieces than the order still has to return.
+      (_order == null || (piecesBySku[item.sku] ?? 0) < _order!.returnableQty(item.sku));
   bool canRemovePc(BasketItem item) =>
       phase == ReturnPhase.scanning && item.state == ItemState.ok && pcsOf(item) > 1;
 
@@ -292,6 +346,7 @@ class ReturnController extends ChangeNotifier {
     phase = ReturnPhase.scanning;
     message = null;
     receiptNo = '';
+    _order = null; // a new return starts without an order (the old one's counts have changed)
     reason = null;
     trxId = null;
     notifyListeners();
@@ -329,7 +384,7 @@ class ReturnController extends ChangeNotifier {
             continue;
           }
           offline = false;
-          final item = returnItemFromInspection(t);
+          final item = _againstOrder(returnItemFromInspection(t));
           if (_items.containsKey(item.epc)) {
             _items[item.epc] = item;
             if (item.state == ItemState.problem) _expireLater(item.epc, item.problem ?? '');

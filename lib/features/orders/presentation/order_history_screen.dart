@@ -180,22 +180,26 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
 
   /* ---------------- Return and exchange ---------------- */
 
-  Future<void> _return(StoreHubOrder o, ReturnsApi returns) => Navigator.of(context).push<void>(
-    shellRoute(
-      context,
-      ReturnScreen(
-        inspector: widget.inspector,
-        api: returns,
-        storeId: widget.storeId,
-        storeName: widget.storeName,
-        staffName: widget.staffName,
-        catalog: widget.catalog,
-        tagReader: widget.tagReader,
-        initialReceipt: o.invoiceNumber,
-        onReturned: widget.onReturned,
+  Future<void> _return(StoreHubOrder o, ReturnsApi returns) async {
+    await Navigator.of(context).push<void>(
+      shellRoute(
+        context,
+        ReturnScreen(
+          inspector: widget.inspector,
+          api: returns,
+          storeId: widget.storeId,
+          storeName: widget.storeName,
+          staffName: widget.staffName,
+          catalog: widget.catalog,
+          tagReader: widget.tagReader,
+          order: o,
+          orders: widget.orders,
+          onReturned: widget.onReturned,
+        ),
       ),
-    ),
-  );
+    );
+    if (mounted) _reload(); // what came back is now on the order
+  }
 
   /// Exchange: step 1 the items coming back (on this order's receipt), step 2 the new items.
   Future<void> _exchange(StoreHubOrder o, ReturnsApi returns) async {
@@ -210,11 +214,13 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
           staffName: widget.staffName,
           catalog: widget.catalog,
           tagReader: widget.tagReader,
-          initialReceipt: o.invoiceNumber,
+          order: o,
+          orders: widget.orders,
           exchange: true,
         ),
       ),
     );
+    if (mounted) _reload();
     if (back == null || !mounted) return;
     await Navigator.of(context).push<void>(
       shellRoute(
@@ -244,15 +250,20 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     final pick = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Order ${o.invoiceNumber}', style: AltaiType.title.copyWith(fontWeight: FontWeight.w700, color: c.ink)),
+        title: Text(
+          'Order ${o.invoiceNumber}',
+          style: AltaiType.title.copyWith(fontWeight: FontWeight.w700, color: c.ink),
+        ),
         content: SizedBox(
           width: 480,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Paid ${_dateTime(o.paidAt)} · ${plural(o.totalQty, 'piece')}',
-                  style: AltaiType.label.copyWith(fontWeight: FontWeight.w400, color: c.inkMuted)),
+              Text(
+                'Paid ${_dateTime(o.paidAt)} · ${plural(o.totalQty, 'piece')}',
+                style: AltaiType.label.copyWith(fontWeight: FontWeight.w400, color: c.inkMuted),
+              ),
               const SizedBox(height: 12),
               for (var i = 0; i < o.lines.length; i++)
                 Padding(
@@ -260,7 +271,11 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                   child: PanelLine(
                     qty: o.lines[i].qty,
                     name: o.lines[i].name,
-                    detail: [?o.lines[i].variation, 'SKU ${o.lines[i].sku}', if (o.lines[i].exempt) 'no tag'].join(' · '),
+                    detail: [
+                      ?o.lines[i].variation,
+                      'SKU ${o.lines[i].sku}',
+                      if (o.lines[i].exempt) 'no tag',
+                    ].join(' · '),
                     shaded: i.isEven,
                   ),
                 ),
@@ -270,7 +285,11 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
         actions: [
           AltaiButton('Close', onPressed: () => Navigator.pop(context)),
           if (returns != null) ...[
-            AltaiButton('Exchange', onPressed: () => Navigator.pop(context, 'exchange'), icon: Icons.swap_horiz_rounded),
+            AltaiButton(
+              'Exchange',
+              onPressed: () => Navigator.pop(context, 'exchange'),
+              icon: Icons.swap_horiz_rounded,
+            ),
             AltaiButton(
               'Return',
               onPressed: () => Navigator.pop(context, 'return'),
@@ -342,14 +361,20 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                         ('evening', 'Evening (after 18:00)'),
                         ('pick', 'Pick times…'),
                       ])
-                        PopupMenuItem(value: value, child: Text(label, style: AltaiType.body)),
+                        PopupMenuItem(
+                          value: value,
+                          child: Text(label, style: AltaiType.body),
+                        ),
                     ],
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(Icons.schedule_rounded, size: 18, color: c.inkMuted),
                         const SizedBox(width: 6),
-                        Text(_timeLabel, style: AltaiType.caption.copyWith(fontWeight: FontWeight.w500, color: c.inkMuted)),
+                        Text(
+                          _timeLabel,
+                          style: AltaiType.caption.copyWith(fontWeight: FontWeight.w500, color: c.inkMuted),
+                        ),
                         Icon(Icons.arrow_drop_down_rounded, color: c.inkMuted),
                       ],
                     ),
@@ -439,16 +464,20 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(_hhmm(TimeOfDay.fromDateTime(o.paidAt)),
-                                style: AltaiType.heading.copyWith(fontWeight: FontWeight.w700, color: c.ink)),
+                            Text(
+                              _hhmm(TimeOfDay.fromDateTime(o.paidAt)),
+                              style: AltaiType.heading.copyWith(fontWeight: FontWeight.w700, color: c.ink),
+                            ),
                             Text(_date(o.paidAt), style: AltaiType.caption.copyWith(fontSize: 12, color: c.inkMuted)),
                           ],
                         ),
                       ),
                       SizedBox(
                         width: _receiptCol,
-                        child: Text(o.invoiceNumber,
-                            style: AltaiType.label.copyWith(fontSize: 16, fontWeight: FontWeight.w600, color: c.ink)),
+                        child: Text(
+                          o.invoiceNumber,
+                          style: AltaiType.label.copyWith(fontSize: 16, fontWeight: FontWeight.w600, color: c.ink),
+                        ),
                       ),
                       Expanded(
                         child: Text(

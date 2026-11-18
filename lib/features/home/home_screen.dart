@@ -153,6 +153,7 @@ class _HomeScreenState extends State<HomeScreen> {
           catalog: widget.catalog,
           tagReader: widget.tagReader,
           onReturned: _returned,
+          orders: widget.orders,
         ));
       case Section.orders when orders != null:
         _push(OrdersScreen(

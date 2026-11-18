@@ -404,6 +404,7 @@ class _BasketScreenState extends State<BasketScreen> {
             staffName: widget.staffName,
             catalog: widget.catalog,
             exchange: true,
+            orders: widget.orders,
           ),
         ),
       ),

@@ -300,38 +300,63 @@ class _HomeScreenState extends State<HomeScreen> {
         searchHint: 'Search receipts and orders…',
         onSearchSubmit: (q) => _open(Section.recent, search: q.trim().isEmpty ? null : q.trim()),
         onRefresh: _loadStats,
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('$_greeting, ${widget.staffName}',
-                  style: AltaiType.title.copyWith(fontSize: 28, fontWeight: FontWeight.w700, color: c.ink)),
-              const SizedBox(height: 4),
-              Text('${widget.storeName} · $_date', style: AltaiType.body.copyWith(fontSize: 16, color: c.inkMuted)),
-              const SizedBox(height: 24),
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (var i = 0; i < 2; i++) ...[
-                      if (i > 0) const SizedBox(width: 24),
-                      Expanded(child: i < tiles.length ? tiles[i] : const SizedBox()),
+        body: LayoutBuilder(
+          builder: (context, box) {
+            // Narrow: the tiles one under the other, the numbers two by two.
+            final narrow = box.maxWidth < 600;
+            final pad = narrow ? 16.0 : 24.0;
+            final perRow = narrow ? 2 : stats.length;
+            return SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(pad, narrow ? 20 : 28, pad, pad),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1200), // a very wide screen: not stretched
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('$_greeting, ${widget.staffName}',
+                          style: AltaiType.title.copyWith(fontSize: narrow ? 24 : 28, fontWeight: FontWeight.w700, color: c.ink)),
+                      const SizedBox(height: 4),
+                      Text('${widget.storeName} · $_date', style: AltaiType.body.copyWith(fontSize: 16, color: c.inkMuted)),
+                      SizedBox(height: narrow ? 16 : 24),
+                      if (narrow)
+                        for (var i = 0; i < tiles.length; i++) ...[
+                          if (i > 0) const SizedBox(height: 16),
+                          tiles[i],
+                        ]
+                      else
+                        IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (var i = 0; i < 2; i++) ...[
+                                if (i > 0) const SizedBox(width: 24),
+                                Expanded(child: i < tiles.length ? tiles[i] : const SizedBox()),
+                              ],
+                            ],
+                          ),
+                        ),
+                      SizedBox(height: narrow ? 16 : 24),
+                      for (var r = 0; r < stats.length; r += perRow) ...[
+                        if (r > 0) const SizedBox(height: 12),
+                        IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (var i = r; i < r + perRow; i++) ...[
+                                if (i > r) SizedBox(width: narrow ? 12 : 16),
+                                Expanded(child: i < stats.length ? stats[i] : const SizedBox()),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  for (var i = 0; i < stats.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 16),
-                    Expanded(child: stats[i]),
-                  ],
-                ],
-              ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -364,8 +389,9 @@ class _Choice extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         onTap: onTap,
         child: Container(
-          constraints: const BoxConstraints(minHeight: 250), // grows with big text instead of overflowing
-          padding: const EdgeInsets.all(28),
+          // Grows with big text instead of overflowing; lower on a phone.
+          constraints: BoxConstraints(minHeight: isCompact(context) ? 0 : 250),
+          padding: EdgeInsets.all(isCompact(context) ? 22 : 28),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

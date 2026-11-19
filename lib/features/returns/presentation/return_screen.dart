@@ -428,8 +428,8 @@ class _ReturnScreenState extends State<ReturnScreen> {
           );
         }
         // Narrow screen (portrait): the order panel goes under the cards; a short screen scrolls.
-        const panelHeight = 420.0;
-        final middleHeight = (box.maxHeight - panelHeight).clamp(320.0, double.infinity);
+        final panelHeight = isCompact(context) ? 470.0 : 420.0;
+        final middleHeight = (box.maxHeight - panelHeight).clamp(isCompact(context) ? 400.0 : 320.0, double.infinity);
         final panel = Container(
           height: panelHeight,
           decoration: BoxDecoration(color: c.surfaceRaised, border: Border(top: BorderSide(color: c.border))),

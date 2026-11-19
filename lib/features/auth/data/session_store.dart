@@ -45,6 +45,8 @@ class SessionStore {
   static const _password = 'password';
   static const _locationId = 'locationStoreId';
   static const _locationName = 'locationStoreName';
+  static const _rememberLoginId = 'rememberLoginId';
+  static const _rememberPassword = 'rememberPassword';
 
   /// After a successful login (and each time the app logs in again by itself).
   Future<void> saveLogin(String session, String merchantId, String staffName,
@@ -80,6 +82,24 @@ class SessionStore {
     await _storage.delete(key: _staffName);
     await _storage.delete(key: _loginId);
     await _storage.delete(key: _password);
+  }
+
+  /// "Remember me" on the login screen: the login ID and password to fill in next time. Kept
+  /// apart from the session, so they stay after log out (until someone logs in without ticking it).
+  Future<({String loginId, String password})?> remembered() async {
+    final id = await _storage.read(key: _rememberLoginId);
+    final pw = await _storage.read(key: _rememberPassword);
+    return id == null || pw == null ? null : (loginId: id, password: pw);
+  }
+
+  Future<void> remember(String loginId, String password) async {
+    await _storage.write(key: _rememberLoginId, value: loginId);
+    await _storage.write(key: _rememberPassword, value: password);
+  }
+
+  Future<void> forgetRemembered() async {
+    await _storage.delete(key: _rememberLoginId);
+    await _storage.delete(key: _rememberPassword);
   }
 
   /// The store this tablet is in, or null when it hasn't been set yet.

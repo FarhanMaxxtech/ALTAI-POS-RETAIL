@@ -243,7 +243,10 @@ class _BasketScreenState extends State<BasketScreen> {
       widget.onSold?.call(_basket.okCount);
       // The order is done: the server links the sold tags to it (and returns can check them later).
       if ((_basket.order, widget.orders) case (final o?, final api?)) {
-        final epcs = [for (final i in _basket.items) if (i.state == ItemState.ok) i.epc];
+        final epcs = [
+          for (final i in _basket.items)
+            if (i.state == ItemState.ok) i.epc,
+        ];
         api.complete(o, epcs, staffName: widget.staffName).catchError((_) {});
       }
     }
@@ -616,8 +619,9 @@ class _BasketScreenState extends State<BasketScreen> {
           );
         }
         // Narrow screen (portrait): the order panel goes under the cards; a short screen scrolls.
-        const panelHeight = 420.0;
-        final middleHeight = (box.maxHeight - panelHeight).clamp(320.0, double.infinity);
+        // Taller on a phone, and with an exchange (its two extra lines).
+        final panelHeight = (isCompact(context) ? 470.0 : 420.0) + (_basket.exchange != null ? 60 : 0);
+        final middleHeight = (box.maxHeight - panelHeight).clamp(isCompact(context) ? 400.0 : 320.0, double.infinity);
         final panel = Container(
           height: panelHeight,
           decoration: BoxDecoration(
@@ -720,7 +724,8 @@ class _BasketScreenState extends State<BasketScreen> {
     return ExchangeSteps(
       step: 2,
       title: 'Exchange · 2 of 2: new items',
-      note: '${plural(e.pieces, 'pc')} back in stock from receipt $original. '
+      note:
+          '${plural(e.pieces, 'pc')} back in stock from receipt $original. '
           'Scan the new items, then enter the receipt of the new StoreHub sale.',
       action: noReceiptYet
           ? TextButton(
@@ -961,17 +966,18 @@ class _BasketScreenState extends State<BasketScreen> {
   }
 
   /// "Customer pays RM 30.00", "Refund RM 20.00" or "Difference RM 0.00".
-  Widget _differenceTotal(int diff) => PanelTotal(
-    diff > 0 ? 'Customer pays' : (diff < 0 ? 'Refund' : 'Difference'),
-    'RM ${formatRm(diff.abs())}',
-  );
+  Widget _differenceTotal(int diff) =>
+      PanelTotal(diff > 0 ? 'Customer pays' : (diff < 0 ? 'Refund' : 'Difference'), 'RM ${formatRm(diff.abs())}');
 
   /// Step 2 of an exchange: what came back (from step 1), then the new items.
   Widget _exchangeLines(BuildContext context, ExchangeReturn e, List<(_Line, _Variant)> rows) {
     final c = context.altai;
     Widget heading(String text) => Padding(
       padding: const EdgeInsets.fromLTRB(2, 6, 2, 4),
-      child: Text(text, style: AltaiType.caption.copyWith(fontSize: 13, fontWeight: FontWeight.w600, color: c.inkMuted)),
+      child: Text(
+        text,
+        style: AltaiType.caption.copyWith(fontSize: 13, fontWeight: FontWeight.w600, color: c.inkMuted),
+      ),
     );
     return ListView(
       children: [
@@ -1250,21 +1256,29 @@ class _BasketScreenState extends State<BasketScreen> {
       for (final l in lines)
         for (final v in l.variants.values) (l, v),
     ];
+    final nextButton = AltaiButton(
+      'Next customer',
+      onPressed: _newBasket,
+      variant: AltaiButtonVariant.primary,
+      icon: Icons.person_add_alt_1_rounded,
+      expand: true,
+    );
+    final narrow = isCompact(context); // a phone: smaller pieces, the button under the total
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+      padding: narrow ? const EdgeInsets.all(16) : const EdgeInsets.fromLTRB(24, 20, 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            padding: EdgeInsets.symmetric(horizontal: narrow ? 16 : 24, vertical: 16),
             decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(16)),
             child: Row(
               children: [
                 Container(
-                  width: 64,
-                  height: 64,
+                  width: narrow ? 48 : 64,
+                  height: narrow ? 48 : 64,
                   decoration: BoxDecoration(color: c.brand, shape: BoxShape.circle),
-                  child: Icon(Icons.check_rounded, size: 38, color: c.onBrand),
+                  child: Icon(Icons.check_rounded, size: narrow ? 28 : 38, color: c.onBrand),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -1273,7 +1287,11 @@ class _BasketScreenState extends State<BasketScreen> {
                     children: [
                       Text(
                         'Good to go',
-                        style: AltaiType.title.copyWith(fontSize: 28, fontWeight: FontWeight.w700, color: dark),
+                        style: AltaiType.title.copyWith(
+                          fontSize: narrow ? 24 : 28,
+                          fontWeight: FontWeight.w700,
+                          color: dark,
+                        ),
                       ),
                       Text(
                         [
@@ -1281,13 +1299,13 @@ class _BasketScreenState extends State<BasketScreen> {
                           'Transaction ${_basket.trxId}',
                           if (CheckoutApi.cleanReceipt(_basket.receiptNo) case final r when r.isNotEmpty) 'Receipt $r',
                         ].join(' · '),
-                        maxLines: 1,
+                        maxLines: narrow ? 2 : 1,
                         overflow: TextOverflow.ellipsis,
                         style: AltaiType.label.copyWith(fontWeight: FontWeight.w400, color: dark),
                       ),
                       Text(
                         _exchangeDifference ?? 'Take payment on StoreHub as usual.',
-                        maxLines: 1,
+                        maxLines: narrow ? 2 : 1,
                         overflow: TextOverflow.ellipsis,
                         style: AltaiType.label.copyWith(fontSize: 16, fontWeight: FontWeight.w600, color: dark),
                       ),
@@ -1308,7 +1326,8 @@ class _BasketScreenState extends State<BasketScreen> {
                   return ListView.separated(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     itemCount: variants.length,
-                    separatorBuilder: (_, _) => Divider(height: 1, indent: 76, endIndent: 24, color: c.border),
+                    separatorBuilder: (_, _) =>
+                        Divider(height: 1, indent: narrow ? 12 : 76, endIndent: narrow ? 12 : 24, color: c.border),
                     itemBuilder: (context, i) {
                       final (l, v) = variants[i];
                       final cents = _cents(v);
@@ -1318,13 +1337,15 @@ class _BasketScreenState extends State<BasketScreen> {
                         height: compact ? 36 : 60,
                         child: Row(
                           children: [
-                            const SizedBox(width: 18),
-                            CircleAvatar(
-                              radius: compact ? 14 : 22,
-                              backgroundColor: c.brandTint,
-                              child: Icon(Icons.checkroom_rounded, size: compact ? 16 : 24, color: c.brandInk),
-                            ),
-                            const SizedBox(width: 14),
+                            SizedBox(width: narrow ? 12 : 18),
+                            if (!narrow) ...[
+                              CircleAvatar(
+                                radius: compact ? 14 : 22,
+                                backgroundColor: c.brandTint,
+                                child: Icon(Icons.checkroom_rounded, size: compact ? 16 : 24, color: c.brandInk),
+                              ),
+                              const SizedBox(width: 14),
+                            ],
                             Expanded(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -1368,7 +1389,7 @@ class _BasketScreenState extends State<BasketScreen> {
                             ),
                             if (_showPrices)
                               SizedBox(
-                                width: 136,
+                                width: narrow ? 96 : 136,
                                 child: FittedBox(
                                   fit: BoxFit.scaleDown,
                                   alignment: Alignment.centerRight,
@@ -1384,7 +1405,7 @@ class _BasketScreenState extends State<BasketScreen> {
                                   ),
                                 ),
                               ),
-                            const SizedBox(width: 24),
+                            SizedBox(width: narrow ? 12 : 24),
                           ],
                         ),
                       );
@@ -1395,36 +1416,42 @@ class _BasketScreenState extends State<BasketScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              if (_showPrices) ...[
-                Text('Total', style: AltaiType.heading.copyWith(color: c.inkMuted)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'RM ${formatRm(_basket.totalCents)}',
-                      style: AltaiType.title.copyWith(fontSize: 26, fontWeight: FontWeight.w700, color: c.ink),
+          if (narrow) ...[
+            if (_showPrices)
+              Row(
+                children: [
+                  Text('Total', style: AltaiType.heading.copyWith(color: c.inkMuted)),
+                  const Spacer(),
+                  Text(
+                    'RM ${formatRm(_basket.totalCents)}',
+                    style: AltaiType.title.copyWith(fontSize: 24, fontWeight: FontWeight.w700, color: c.ink),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 12),
+            nextButton,
+          ] else
+            Row(
+              children: [
+                if (_showPrices) ...[
+                  Text('Total', style: AltaiType.heading.copyWith(color: c.inkMuted)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'RM ${formatRm(_basket.totalCents)}',
+                        style: AltaiType.title.copyWith(fontSize: 26, fontWeight: FontWeight.w700, color: c.ink),
+                      ),
                     ),
                   ),
-                ),
-              ] else
-                const Spacer(),
-              const SizedBox(width: 12),
-              SizedBox(
-                width: 280,
-                child: AltaiButton(
-                  'Next customer',
-                  onPressed: _newBasket,
-                  variant: AltaiButtonVariant.primary,
-                  icon: Icons.person_add_alt_1_rounded,
-                  expand: true,
-                ),
-              ),
-            ],
-          ),
+                ] else
+                  const Spacer(),
+                const SizedBox(width: 12),
+                SizedBox(width: 280, child: nextButton),
+              ],
+            ),
         ],
       ),
     );

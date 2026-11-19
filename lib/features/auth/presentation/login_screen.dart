@@ -29,7 +29,25 @@ class _LoginScreenState extends State<LoginScreen> {
   final _password = TextEditingController();
   bool _busy = false;
   bool _hidePassword = true;
+  bool _remember = false;
   late String? _error = widget.notice;
+
+  @override
+  void initState() {
+    super.initState();
+    _fillRemembered();
+  }
+
+  /// "Remember me" was ticked last time: fill the login in again.
+  Future<void> _fillRemembered() async {
+    final saved = await widget.auth.remembered();
+    if (saved == null || !mounted) return;
+    setState(() {
+      _loginId.text = saved.loginId;
+      _password.text = saved.password;
+      _remember = true;
+    });
+  }
 
   @override
   void dispose() {
@@ -45,7 +63,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      widget.onLoggedIn(await widget.auth.login(_loginId.text.trim(), _password.text));
+      widget.onLoggedIn(await widget.auth.login(_loginId.text.trim(), _password.text, remember: _remember));
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
@@ -112,8 +130,39 @@ class _LoginScreenState extends State<LoginScreen> {
               autofillHints: const [AutofillHints.password],
               onSubmitted: (_) => _submit(),
             ),
+            const SizedBox(height: 8),
+            // Fills the login in next time, also after log out.
+            Align(
+              alignment: Alignment.centerLeft,
+              child: InkWell(
+                key: const ValueKey('remember-me'),
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => setState(() => _remember = !_remember),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: Checkbox(
+                          value: _remember,
+                          onChanged: (v) => setState(() => _remember = v ?? false),
+                          activeColor: c.brand,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text('Remember me', style: AltaiType.body.copyWith(fontSize: 15, color: c.ink)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
             if (_error != null) ...[const SizedBox(height: D.space4), AltaiNotice(_error!)],
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             AltaiButton(
               _busy ? 'Logging in…' : 'Log in',
               onPressed: _busy ? null : _submit,

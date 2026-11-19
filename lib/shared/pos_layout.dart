@@ -74,6 +74,12 @@ class ShellAction {
   final VoidCallback? onPressed;
 }
 
+/// Narrower than this (a phone, a small tablet held upright): no left menu, a menu button opens it
+/// from the side instead, and the search gets its own row.
+const compactWidth = 720.0;
+
+bool isCompact(BuildContext context) => MediaQuery.sizeOf(context).width < compactWidth;
+
 class AppShell extends StatelessWidget {
   const AppShell({
     super.key,
@@ -113,22 +119,36 @@ class AppShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.altai;
+    final compact = isCompact(context);
+    final hasSearch = onSearch != null || onSearchSubmit != null;
     return Scaffold(
       backgroundColor: c.surface100,
       resizeToAvoidBottomInset: resizeToAvoidBottomInset,
+      drawer: compact && ShellScope.maybeOf(context) != null ? _MenuDrawer(shell: this) : null,
       body: SafeArea(
         bottom: false,
         child: Column(
           children: [
-            _TopBar(shell: this),
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Rail(shell: this),
-                  Expanded(child: body),
-                ],
+            _TopBar(shell: this, compact: compact),
+            if (compact && hasSearch)
+              Container(
+                decoration: BoxDecoration(
+                  color: c.surfaceRaised,
+                  border: Border(bottom: BorderSide(color: c.border)),
+                ),
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                child: _SearchBox(hint: searchHint, onChanged: onSearch, onSubmitted: onSearchSubmit),
               ),
+            Expanded(
+              child: compact
+                  ? body
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _Rail(shell: this),
+                        Expanded(child: body),
+                      ],
+                    ),
             ),
           ],
         ),
@@ -154,45 +174,68 @@ class AppShell extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.shell});
+  const _TopBar({required this.shell, required this.compact});
 
   final AppShell shell;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final c = context.altai;
     final action = shell.action;
+    final gap = compact ? 8.0 : 12.0;
+    final hasMenu = compact && ShellScope.maybeOf(context) != null;
+    final hasSearch = shell.onSearch != null || shell.onSearchSubmit != null;
     return Container(
-      height: 76,
+      height: compact ? 64 : 76,
       decoration: BoxDecoration(
         color: c.surfaceRaised,
-        border: Border(bottom: BorderSide(color: c.border)),
+        border: compact && hasSearch ? null : Border(bottom: BorderSide(color: c.border)),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 22),
+      padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 22),
       child: Row(
         children: [
           if (shell.onBack case final back?) ...[
             IconButton(onPressed: back, tooltip: 'Back', icon: Icon(Icons.arrow_back_rounded, color: c.ink)),
             const SizedBox(width: D.space1),
-          ],
-          const LogoTile(),
+          ] else if (hasMenu)
+            Builder(
+              builder: (context) => IconButton(
+                key: const ValueKey('menu-button'),
+                onPressed: () => Scaffold.of(context).openDrawer(),
+                tooltip: 'Menu',
+                icon: Icon(Icons.menu_rounded, color: c.ink),
+              ),
+            ),
+          LogoTile(size: compact ? 36 : 40),
           const SizedBox(width: 12),
-          Text('Altai POS', style: AltaiType.title.copyWith(fontWeight: FontWeight.w700, color: c.ink)),
-          const SizedBox(width: 36),
           Flexible(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: _SearchBox(hint: shell.searchHint, onChanged: shell.onSearch, onSubmitted: shell.onSearchSubmit),
+            flex: compact ? 1 : 0,
+            child: Text(
+              'Altai POS',
+              maxLines: 1,
+              overflow: TextOverflow.fade,
+              softWrap: false,
+              style: AltaiType.title.copyWith(fontSize: compact ? 18 : null, fontWeight: FontWeight.w700, color: c.ink),
             ),
           ),
-          const Spacer(),
-          const SizedBox(width: D.space3),
+          if (!compact) ...[
+            const SizedBox(width: 36),
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: _SearchBox(hint: shell.searchHint, onChanged: shell.onSearch, onSubmitted: shell.onSearchSubmit),
+              ),
+            ),
+            const Spacer(),
+          ],
+          SizedBox(width: compact ? 4 : D.space3),
           if (shell.onRefresh case final refresh?) ...[
             BoxIconButton(Icons.refresh_rounded, tooltip: shell.refreshTooltip, onPressed: refresh),
-            const SizedBox(width: 12),
+            SizedBox(width: gap),
           ],
           if (shell.offline)
-            const OfflinePill()
+            OfflinePill(short: compact)
           else
             Tooltip(
               message: 'Online',
@@ -208,8 +251,23 @@ class _TopBar extends StatelessWidget {
               ),
             ),
           if (action != null) ...[
-            const SizedBox(width: 12),
-            ShellButton(action.label, icon: action.icon, onPressed: action.onPressed),
+            SizedBox(width: gap),
+            if (compact)
+              // Just the icon on a narrow screen; the name shows on a long press.
+              Tooltip(
+                message: action.label,
+                child: Material(
+                  color: action.onPressed == null ? c.surfaceSunken : c.brand,
+                  borderRadius: BorderRadius.circular(10),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: action.onPressed,
+                    child: SizedBox(width: 44, height: 44, child: Icon(action.icon, size: 22, color: c.onBrand)),
+                  ),
+                ),
+              )
+            else
+              ShellButton(action.label, icon: action.icon, onPressed: action.onPressed),
           ],
         ],
       ),
@@ -287,7 +345,10 @@ class BoxIconButton extends StatelessWidget {
 
 /// The amber "Offline" pill in the top bar.
 class OfflinePill extends StatelessWidget {
-  const OfflinePill({super.key});
+  const OfflinePill({super.key, this.short = false});
+
+  /// Just the icon (a narrow screen).
+  final bool short;
 
   @override
   Widget build(BuildContext context) {
@@ -299,9 +360,11 @@ class OfflinePill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.wifi_off_rounded, size: 22, color: c.warning),
-          const SizedBox(width: 6),
-          Text('Offline', style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.warning)),
+          Icon(Icons.wifi_off_rounded, size: 22, color: c.warning, semanticLabel: short ? 'Offline' : null),
+          if (!short) ...[
+            const SizedBox(width: 6),
+            Text('Offline', style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.warning)),
+          ],
         ],
       ),
     );
@@ -399,6 +462,89 @@ class _Rail extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// The left menu on a narrow screen: slides in from the side.
+class _MenuDrawer extends StatelessWidget {
+  const _MenuDrawer({required this.shell});
+
+  final AppShell shell;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.altai;
+    final nav = ShellScope.maybeOf(context)!;
+    void go(VoidCallback then) {
+      Navigator.of(context).pop(); // close the menu first
+      then();
+    }
+
+    return Drawer(
+      backgroundColor: c.surfaceRaised,
+      width: 280,
+      child: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+              child: Row(
+                children: [
+                  const LogoTile(),
+                  const SizedBox(width: 12),
+                  Text('Altai POS', style: AltaiType.title.copyWith(fontWeight: FontWeight.w700, color: c.ink)),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                children: [
+                  for (final s in Section.values)
+                    if (!nav.hidden.contains(s))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: ListTile(
+                          leading: Icon(s.icon, color: s == shell.section ? c.brandInk : c.inkMuted),
+                          title: Text(s.label,
+                              style: AltaiType.bodyStrong.copyWith(color: s == shell.section ? c.brandInk : c.ink)),
+                          selected: s == shell.section,
+                          selectedTileColor: c.brandTint,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          onTap: () => go(() => shell._go(context, s)),
+                        ),
+                      ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: c.border),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 12, 10),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: c.brandTint,
+                    child: Text(initials(nav.staffName),
+                        style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.brandInk)),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(nav.staffName,
+                        maxLines: 1, overflow: TextOverflow.ellipsis, style: AltaiType.bodyStrong.copyWith(color: c.ink)),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => go(() => shell._logout(context)),
+                    icon: const Icon(Icons.logout_rounded, size: 20),
+                    label: const Text('Log out'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1097,13 +1243,25 @@ class TintButton extends StatelessWidget {
 
 /// A white card of rows with a header (Orders, Recent): the table look of the Figma.
 class TableCard extends StatelessWidget {
-  const TableCard({super.key, required this.header, required this.rows});
+  const TableCard({super.key, required this.header, required this.rows, this.minWidth = 760});
 
   final Widget header;
   final List<Widget> rows;
 
+  /// Narrower than this (a phone): the table keeps this width and slides sideways.
+  final double minWidth;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, box) => box.maxWidth >= minWidth
+        ? _table(context)
+        : SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(width: minWidth, child: _table(context)),
+          ),
+  );
+
+  Widget _table(BuildContext context) {
     final c = context.altai;
     return Container(
       decoration: BoxDecoration(color: c.surfaceRaised, borderRadius: BorderRadius.circular(14)),
@@ -1170,28 +1328,52 @@ class ExchangeSteps extends StatelessWidget {
       );
     }
 
+    final heading = Row(
+      children: [
+        Icon(Icons.swap_horiz_rounded, color: c.brandInk),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.ink)),
+              Text(note, style: AltaiType.caption.copyWith(color: c.inkMuted)),
+            ],
+          ),
+        ),
+      ],
+    );
+    final steps = [
+      dot(1, 'Items back'),
+      Container(width: 24, height: 2, margin: const EdgeInsets.symmetric(horizontal: 8), color: c.brandBorder),
+      dot(2, 'New items'),
+    ];
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
       decoration: BoxDecoration(color: c.brandTint, borderRadius: BorderRadius.circular(12)),
-      child: Row(
-        children: [
-          Icon(Icons.swap_horiz_rounded, color: c.brandInk),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: AltaiType.label.copyWith(fontWeight: FontWeight.w600, color: c.ink)),
-                Text(note, style: AltaiType.caption.copyWith(color: c.inkMuted)),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          dot(1, 'Items back'),
-          Container(width: 24, height: 2, margin: const EdgeInsets.symmetric(horizontal: 8), color: c.brandBorder),
-          dot(2, 'New items'),
-          if (action != null) ...[const SizedBox(width: 8), action!],
-        ],
+      child: LayoutBuilder(
+        // Narrow: the steps go under the title.
+        builder: (context, box) => box.maxWidth < 560
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  heading,
+                  const SizedBox(height: 8),
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    runSpacing: 4,
+                    children: [Row(mainAxisSize: MainAxisSize.min, children: steps), ?action],
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(child: heading),
+                  const SizedBox(width: 12),
+                  ...steps,
+                  if (action != null) ...[const SizedBox(width: 8), action!],
+                ],
+              ),
       ),
     );
   }

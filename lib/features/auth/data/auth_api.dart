@@ -18,11 +18,19 @@ class AuthApi {
   /// Merchant/Login. Keeps the session on the API client and saves it on the tablet. The store is
   /// picked next, from [stores]: only the stores this account can use are offered, so nobody sells
   /// in a store they don't belong to.
-  Future<Staff> login(String loginId, String password) async {
+  ///
+  /// [remember]: keep the login ID and password to fill in on the login screen next time (also after
+  /// log out); without it, any remembered login is forgotten.
+  Future<Staff> login(String loginId, String password, {bool remember = false}) async {
     final res = await _api.login({'loginId': loginId, 'password': password});
     _loginId = loginId;
     _password = password;
     await _use(res, fallbackName: loginId, loginId: loginId, password: password);
+    try {
+      remember ? await _session.remember(loginId, password) : await _session.forgetRemembered();
+    } catch (_) {
+      // Not being able to remember it doesn't stop the login.
+    }
     ApiClient.sessionLog('login: got and saved ${ApiClient.tail(res.session)}');
     return Staff(res.name.isEmpty ? loginId : res.name);
   }
@@ -49,6 +57,15 @@ class AuthApi {
     } on ApiException catch (e) {
       ApiClient.sessionLog('logging in again failed: ${e.message}');
       return false;
+    }
+  }
+
+  /// The login ticked "Remember me" last, to fill in on the login screen; null when there's none.
+  Future<({String loginId, String password})?> remembered() async {
+    try {
+      return await _session.remembered();
+    } catch (_) {
+      return null; // storage not there (tests) or unreadable: just an empty form
     }
   }
 

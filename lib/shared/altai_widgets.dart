@@ -533,5 +533,45 @@ class StatusCircle extends StatelessWidget {
 /// Android draws the app under that bar, which hid the bottom of screens (e.g. "Confirm & submit").
 Widget aboveSystemBars(BuildContext context, Widget? child) => ColoredBox(
       color: Theme.of(context).scaffoldBackgroundColor,
-      child: SafeArea(top: false, child: child ?? const SizedBox.shrink()),
+      child: SafeArea(top: false, child: FitSmallTablet(child: child ?? const SizedBox.shrink())),
     );
+
+/// A smaller tablet (e.g. the Galaxy Tab A11, about 1007 × 601) gets everything drawn a little
+/// smaller, as if its display size were turned down, so it looks like the 11" tablet the screens
+/// were designed on (753 high) instead of cutting off the menu. Phones and big tablets stay as they are.
+class FitSmallTablet extends StatelessWidget {
+  const FitSmallTablet({super.key, required this.child});
+
+  final Widget child;
+
+  /// How much smaller to draw on a screen whose short side is [shortSide] (logical pixels).
+  static double scaleFor(double shortSide) =>
+      shortSide < 500 || shortSide >= 720 ? 1.0 : (shortSide / 720).clamp(0.8, 1.0);
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (context, box) {
+          final scale = scaleFor(MediaQuery.sizeOf(context).shortestSide);
+          if (scale == 1.0 || !box.hasBoundedWidth || !box.hasBoundedHeight) return child;
+          final mq = MediaQuery.of(context);
+          final size = Size(box.maxWidth / scale, box.maxHeight / scale);
+          return FittedBox(
+            fit: BoxFit.fill,
+            alignment: Alignment.topLeft,
+            child: SizedBox.fromSize(
+              size: size,
+              child: MediaQuery(
+                data: mq.copyWith(
+                  size: size,
+                  devicePixelRatio: mq.devicePixelRatio * scale,
+                  padding: mq.padding / scale,
+                  viewPadding: mq.viewPadding / scale,
+                  viewInsets: mq.viewInsets / scale, // the keyboard, in the smaller pixels
+                ),
+                child: child,
+              ),
+            ),
+          );
+        },
+      );
+}

@@ -16,8 +16,8 @@ http.Response json(Object body) =>
 void main() {
   test('the remark carries the time; the list only has the date', () {
     final s = CheckoutSummary.fromTeam(
-        {'id': 1, 'trxDate': '2026-11-03', 'remark': CheckoutApi.remark('abc', 'Aina', at: DateTime(2026, 11, 3, 14, 32, 5))});
-    expect(s.remark, 'Altai POS · Aina · 14:32:05 · ref abc');
+        {'id': 1, 'trxDate': '2026-11-03', 'remark': CheckoutApi.remark('Aina', at: DateTime(2026, 11, 3, 14, 32, 5))});
+    expect(s.remark, 'Altai POS · Aina · 14:32:05');
     expect(s.createdAt, DateTime(2026, 11, 3, 14, 32, 5));
     expect(s.hasTime, isTrue);
     expect(s.cashier, 'Aina');
@@ -30,7 +30,7 @@ void main() {
   });
 
   test('a sale with no cashier name has no cashier', () {
-    expect(CheckoutSummary.fromTeam({'remark': CheckoutApi.remark('abc', '')}).cashier, isNull);
+    expect(CheckoutSummary.fromTeam({'remark': CheckoutApi.remark('')}).cashier, isNull);
   });
 
   testWidgets('filters by cashier and searches transaction no.', (tester) async {

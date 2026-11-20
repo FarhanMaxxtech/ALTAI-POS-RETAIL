@@ -17,7 +17,7 @@ class FakeTeam {
   final calls = <String>[];
   final bodies = <String, Map<String, dynamic>>{};
   http.Response? Function(String path)? override;
-  final savedRemarks = <String>[];
+  final saved = <String, String>{}; // clientRef → status: "0" pending, "1" approved, "4" voided
 
   late final api = ApiClient(
       client: MockClient((req) async {
@@ -32,14 +32,14 @@ class FakeTeam {
           case 'Stock/EpcList':
             return json({'data': []});
           case 'Stock/Adjustment':
-            savedRemarks.add(bodies[path]!['remark'] as String);
+            final ref = bodies[path]!['clientRef'] as String;
+            // The same ref again: the first one back, with where it is.
+            if (saved[ref] case final status?) return json({'trxId': 77, 'duplicate': true, 'status': status});
+            saved[ref] = '0';
             return json({'trxId': 77});
           case 'Stock/AdjustmentApproveNoScan':
+            saved.updateAll((_, s) => s == '0' ? '1' : s);
             return json({'trxId': 77});
-          case 'Stock/AdjustmentList':
-            return json({
-              'data': [for (final r in savedRemarks) {'id': 77, 'trxId': 'ADJ-77', 'remark': r}]
-            });
         }
         return json({'error': 'unexpected $path'});
       }),
@@ -96,17 +96,20 @@ void main() {
     expect(save['trxType'], 'ADI');
     expect(save['storeId'], '12');
     expect(save['epcs'], ['E2801160000000A1']);
-    expect(save['remark'], startsWith('Return · receipt R-1042 · Wrong size · Aina · ref '));
+    expect(save['receiptNo'], 'R-1042');
+    expect(save['reason'], 'Wrong size');
+    expect(save['clientRef'], isNotEmpty);
+    expect(save['remark'], matches(RegExp(r'^Altai POS return · Aina · \d{2}:\d{2}:\d{2}$')));
     expect(team.bodies['Stock/AdjustmentApproveNoScan']!['id'], '77');
   });
 
-  test('no answer to the save: Try again finds it and only approves, never saves twice', () async {
+  test('no answer to the save: Try again sends the same ref, gets the saved one back and approves it', () async {
     final team = FakeTeam();
     var first = true;
     team.override = (p) {
       if (p == 'Stock/Adjustment' && first) {
         first = false;
-        team.savedRemarks.add(team.bodies[p]!['remark'] as String); // it went through…
+        team.saved[team.bodies[p]!['clientRef'] as String] = '0'; // it went through…
         throw http.ClientException('connection reset'); // …but the answer was lost
       }
       return null;
@@ -117,9 +120,39 @@ void main() {
 
     await r.submit();
     expect(r.phase, ReturnPhase.done);
-    expect(team.count('Stock/Adjustment'), 1);
-    expect(team.count('Stock/AdjustmentList'), 1);
+    expect(team.saved, hasLength(1), reason: 'one return, not two');
+    expect(team.count('Stock/AdjustmentApproveNoScan'), 1);
     expect(team.bodies['Stock/AdjustmentApproveNoScan']!['id'], '77');
+  });
+
+  test('no answer to the approve, but it went through: Try again sees it approved and stops', () async {
+    final team = FakeTeam();
+    var first = true;
+    team.override = (p) {
+      if (p == 'Stock/AdjustmentApproveNoScan' && first) {
+        first = false;
+        team.saved.updateAll((_, s) => '1'); // approved…
+        throw http.ClientException('connection reset'); // …but the answer was lost
+      }
+      return null;
+    };
+    final r = await readyReturn(team);
+    await r.submit();
+    expect(r.phase, ReturnPhase.retry);
+
+    await r.submit();
+    expect(r.phase, ReturnPhase.done);
+    expect(team.count('Stock/AdjustmentApproveNoScan'), 1, reason: 'already approved: not again');
+  });
+
+  test('the saved return was voided on the server: the cashier is told, nothing approved', () async {
+    final team = FakeTeam()
+      ..override = (p) => p == 'Stock/Adjustment' ? json({'trxId': 77, 'duplicate': true, 'status': '4'}) : null;
+    final r = await readyReturn(team);
+    await r.submit();
+    expect(r.phase, ReturnPhase.scanning);
+    expect(r.message, contains('cancelled on the server'));
+    expect(team.count('Stock/AdjustmentApproveNoScan'), 0);
   });
 
   test('a bundle tag (5 pieces) comes back as 1 piece per tag, like the checkout took out', () async {
@@ -165,11 +198,13 @@ void main() {
     ]);
   });
 
-  test('normal items: no qtys sent, 1 per tag as before', () async {
+  test('normal items: qtys sent too, 1 per tag', () async {
     final team = FakeTeam();
     final r = await readyReturn(team);
     await r.submit();
-    expect(team.bodies['Stock/Adjustment']!.containsKey('qtys'), isFalse);
+    expect(team.bodies['Stock/Adjustment']!['qtys'], [
+      {'sku': 'CT-BLK-M', 'qty': 1},
+    ]);
   });
 
   test('approval refused: stays saved, Try again approves the same one', () async {

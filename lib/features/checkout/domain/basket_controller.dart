@@ -492,23 +492,13 @@ class BasketController extends ChangeNotifier {
   Future<void> complete() async {
     if (phase == BasketPhase.scanning && !canComplete) return;
     if (phase != BasketPhase.scanning && phase != BasketPhase.retry) return;
-    final again = phase == BasketPhase.retry;
     phase = BasketPhase.sending;
     message = null;
     notifyListeners();
 
     try {
-      if (again) {
-        // The first send got no answer. If it was recorded anyway, sending again would sell the
-        // same pieces twice, so look for it first.
-        final found = await api.findByRef(storeId, _clientRef);
-        if (found != null) {
-          trxId = found;
-          phase = BasketPhase.done;
-          notifyListeners();
-          return;
-        }
-      }
+      // After no answer this goes again with the SAME ref: if the first send was recorded after all,
+      // the team's API answers with that sale instead of selling the pieces twice.
       trxId = await api.checkout(
         storeId: storeId,
         clientRef: _clientRef,

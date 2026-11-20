@@ -1,12 +1,26 @@
 /// One checkout from the team's Stock/CheckoutList, for the Recent screen.
 class CheckoutSummary {
-  const CheckoutSummary({required this.createdAt, this.id, this.trxId, this.remark, this.storeName});
+  const CheckoutSummary({
+    required this.createdAt,
+    this.id,
+    this.trxId,
+    this.remark,
+    this.storeName,
+    this.receiptField,
+    this.exchangeField,
+    this.noReceiptField,
+  });
 
   final DateTime createdAt;
   final String? id; // the record id, for Stock/CheckoutInfo
   final String? trxId; // the team's transaction number
   final String? remark; // "Altai POS · Aina · 14:32:05 · rcpt SH-0012 · ref …" for sales from this app
   final String? storeName;
+
+  // The receipt fields of the team's API (since 20 Nov 2026). Older sales have them in the remark.
+  final String? receiptField;
+  final String? exchangeField;
+  final String? noReceiptField;
 
   /// True when the time of day is known (not just the date).
   bool get hasTime => createdAt.hour != 0 || createdAt.minute != 0 || createdAt.second != 0;
@@ -22,6 +36,9 @@ class CheckoutSummary {
     trxId: (j['trxId'] ?? j['id'])?.toString(),
     remark: j['remark']?.toString(),
     storeName: j['storeName']?.toString(),
+    receiptField: _text(j['receiptNo']),
+    exchangeField: _text(j['exchangeReceiptNo']),
+    noReceiptField: _text(j['noReceiptReason']),
   );
 
   /// Who rang it up, read back from our own remark. Null for sales made elsewhere.
@@ -35,8 +52,9 @@ class CheckoutSummary {
         : name;
   }
 
-  /// The StoreHub receipt number, read back from our own remark. Null when there was none.
+  /// The StoreHub receipt number (its field, or our remark for older sales). Null when there was none.
   String? get receipt {
+    if (receiptField != null) return receiptField;
     final parts = remark?.split(' · ') ?? const [];
     if (parts.isEmpty || parts.first != 'Altai POS') return null;
     for (final p in parts) {
@@ -47,6 +65,7 @@ class CheckoutSummary {
 
   /// For the new items of an exchange: the original sale's receipt. Null otherwise.
   String? get exchangeFor {
+    if (exchangeField != null) return exchangeField;
     for (final p in remark?.split(' · ') ?? const <String>[]) {
       if (p.startsWith('exch ')) return p.substring(5);
     }
@@ -55,11 +74,17 @@ class CheckoutSummary {
 
   /// Why there was no receipt ("StoreHub offline"), or null.
   String? get noReceiptReason {
+    if (noReceiptField != null) return noReceiptField;
     for (final p in remark?.split(' · ') ?? const <String>[]) {
       if (p.startsWith('no rcpt: ')) return p.substring(9);
     }
     return null;
   }
+}
+
+String? _text(Object? v) {
+  final t = v?.toString().trim() ?? '';
+  return t.isEmpty ? null : t;
 }
 
 final _time = RegExp(r'^(\d{2}):(\d{2}):(\d{2})$');

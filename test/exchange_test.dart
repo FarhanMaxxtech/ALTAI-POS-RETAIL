@@ -54,8 +54,6 @@ class FakeApi implements CheckoutApi {
     return '501';
   }
 
-  @override
-  Future<String?> findByRef(String storeId, String clientRef) async => null;
 
   @override
   Future<List<CheckoutSummary>> recent(String storeId, {DateTime? from, DateTime? to}) async => [];
@@ -88,13 +86,21 @@ void main() {
     expect(exchangeDifferenceText(4990, 4990, rm), 'No money changes hands');
   });
 
-  test('the new items name the original receipt in their remark', () {
-    final remark = CheckoutApi.remark('abc', 'Aina', receiptNo: 'SH-0020', exchangeFor: 'sh-0012');
-    expect(remark, endsWith(' · rcpt SH-0020 · exch SH-0012 · ref abc'));
-    final s = CheckoutSummary.fromTeam({'trxDate': '2026-11-05', 'remark': remark});
+  test('the new items name the original receipt (its field; older sales: the remark)', () {
+    final s = CheckoutSummary.fromTeam({
+      'trxDate': '2026-11-05',
+      'remark': CheckoutApi.remark('Aina'),
+      'receiptNo': 'SH-0020',
+      'exchangeReceiptNo': 'SH-0012',
+    });
     expect(s.exchangeFor, 'SH-0012');
     expect(s.receipt, 'SH-0020');
     expect(s.cashier, 'Aina');
+
+    final old = CheckoutSummary.fromTeam(
+        {'trxDate': '2026-11-05', 'remark': 'Altai POS · Aina · 10:00:00 · rcpt SH-0020 · exch SH-0012 · ref abc'});
+    expect(old.exchangeFor, 'SH-0012');
+    expect(old.receipt, 'SH-0020');
   });
 
   testWidgets('exchange: items back, then the new items on the same receipt', (tester) async {

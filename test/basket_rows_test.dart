@@ -52,8 +52,6 @@ class FakeApi implements CheckoutApi {
     String exchangeFor = '',
   }) async => '501';
 
-  @override
-  Future<String?> findByRef(String storeId, String clientRef) async => null;
 
   @override
   Future<List<CheckoutSummary>> recent(String storeId, {DateTime? from, DateTime? to}) async => [];

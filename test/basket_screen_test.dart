@@ -55,8 +55,6 @@ class FakeApi implements CheckoutApi {
     return '501';
   }
 
-  @override
-  Future<String?> findByRef(String storeId, String clientRef) async => null; // the failed send wasn't kept
 
   @override
   Future<List<CheckoutSummary>> recent(String storeId, {DateTime? from, DateTime? to}) async => [];

@@ -146,18 +146,49 @@ void main() {
     expect(tags[1], containsPair('found', false));
   });
 
-  test('checkout puts the ref in the remark, and findByRef finds it in the list', () async {
+  test('checkout: the receipt, the exchange receipt and the ref go in their own fields', () async {
+    final bodies = <Map<String, dynamic>>[];
     final api = clientFor((req) async {
-      if (req.url.path.endsWith('Stock/Checkout')) {
-        final body = jsonDecode(req.body) as Map<String, dynamic>;
-        expect(body['remark'], matches(RegExp(r'^Altai POS · Aina · \d{2}:\d{2}:\d{2} · ref r1$')));
-        return json({'trxId': 501});
-      }
-      return json({'data': [{'id': 9, 'trxId': 501, 'remark': 'Altai POS · Aina · ref r1'}]});
+      bodies.add(jsonDecode(req.body) as Map<String, dynamic>);
+      return json({'trxId': 501});
     });
     final checkouts = CheckoutApi(api);
-    expect(await checkouts.checkout(storeId: '12', clientRef: 'r1', epcs: ['E2801160000000A1'], staffName: 'Aina'), '501');
-    expect(await checkouts.findByRef('12', 'r1'), '501');
-    expect(await checkouts.findByRef('12', 'r2'), isNull);
+    expect(
+      await checkouts.checkout(
+          storeId: '12', clientRef: 'r1', epcs: ['E2801160000000A1'], staffName: 'Aina',
+          receiptNo: ' 0012611191423123 ', exchangeFor: '0012611191217328'),
+      '501',
+    );
+    final b = bodies.single;
+    expect(b['clientRef'], 'r1');
+    expect(b['receiptNo'], '0012611191423123');
+    expect(b['exchangeReceiptNo'], '0012611191217328');
+    expect(b.containsKey('noReceiptReason'), isFalse);
+    expect(b['remark'], matches(RegExp(r'^Altai POS · Aina · \d{2}:\d{2}:\d{2}$')));
+
+    // No receipt: the reason instead, cut to the 100 characters the API takes.
+    await checkouts.checkout(storeId: '12', clientRef: 'r2', epcs: ['E2801160000000A1'], noReceiptReason: 'x' * 150);
+    expect(bodies.last.containsKey('receiptNo'), isFalse);
+    expect(bodies.last['noReceiptReason'], 'x' * 100);
+  });
+
+  test('a resend with the same ref: the API answers with the first sale', () async {
+    final api = clientFor((req) async => json({'trxId': '274', 'duplicate': true, 'status': 'Y'}));
+    expect(await CheckoutApi(api).checkout(storeId: '12', clientRef: 'r1', epcs: ['E2801160000000A1']), '274');
+  });
+
+  test('findByReceipt asks the list by receipt no.', () async {
+    Uri? asked;
+    final api = clientFor((req) async {
+      asked = req.url;
+      return json({
+        'data': [
+          {'id': 9, 'trxId': 501, 'trxDate': '2026-11-20', 'remark': 'Altai POS · Aina · 10:00:00', 'receiptNo': '0012611191423123'},
+        ]
+      });
+    });
+    final found = await CheckoutApi(api).findByReceipt('12', '0012611191423123');
+    expect(asked!.queryParameters['receiptNo'], '0012611191423123');
+    expect(found.single.trxId, '501');
   });
 }

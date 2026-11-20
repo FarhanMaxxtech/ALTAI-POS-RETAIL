@@ -428,17 +428,15 @@ class ReturnController extends ChangeNotifier {
     notifyListeners();
   }
 
-  String get _remark => ReturnsApi.remark(
-      receiptNo: receiptNo.trim(), reason: reason ?? '', staffName: staffName, clientRef: _clientRef);
+  String get _remark => ReturnsApi.remark(staffName);
 
-  /// Saves the adjustment, then approves it. Try again after a problem picks up where it stopped.
-  /// Bundle SKUs (a tag that counts as several pieces) and how many pieces come back: 1 per tag
-  /// unless the cashier changed it with − / +. Without it Altai would put back the whole bundle.
-  /// Normal SKUs aren't listed; they already go back 1 per tag.
-  Map<String, int> get bundleQtys {
+  /// How many pieces come back per SKU: 1 per tag, or for a bundle tag (several pieces on one tag)
+  /// what the cashier set with − / +. Sent for every SKU, so a bundle tag isn't counted × its
+  /// "multiply by".
+  Map<String, int> get qtys {
     final qtys = <String, int>{};
     for (final i in _items.values) {
-      if (i.multiplier > 1 && i.sku != null) qtys[i.sku!] = (qtys[i.sku!] ?? 0) + pcsOf(i);
+      if (i.sku != null) qtys[i.sku!] = (qtys[i.sku!] ?? 0) + pcsOf(i);
     }
     return qtys;
   }
@@ -454,10 +452,31 @@ class ReturnController extends ChangeNotifier {
     // Step 1: save (unless it's already saved).
     if (from != ReturnPhase.notApproved) {
       try {
-        // After no answer the first save may have gone through: look for it before saving again.
-        final found = from == ReturnPhase.retry ? await api.findByRef(storeId, _clientRef) : null;
-        trxId = found ??
-            await api.save(storeId: storeId, epcs: _items.keys.toList(), remark: _remark, qtys: bundleQtys);
+        // After no answer this goes again with the SAME ref: if the first save went through, the
+        // team's API answers with that one, and says whether it's approved already.
+        final saved = await api.save(
+          storeId: storeId,
+          epcs: _items.keys.toList(),
+          remark: _remark,
+          clientRef: _clientRef,
+          receiptNo: receiptNo.trim(),
+          reason: reason ?? '',
+          qtys: qtys,
+        );
+        trxId = saved.trxId;
+        if (saved.status == ReturnSaved.approved) {
+          phase = ReturnPhase.done; // approved the first time: the stock is already back
+          notifyListeners();
+          return;
+        }
+        if (saved.status == ReturnSaved.voided) {
+          _clientRef = newClientRef(); // submitting again saves a new return
+          message = 'This return was cancelled on the server, so nothing went back in stock. '
+              'Check with the manager before submitting it again.';
+          phase = ReturnPhase.scanning;
+          notifyListeners();
+          return;
+        }
       } on ApiException catch (e) {
         message = _markStillInStock(e.message) ?? e.message;
         // Refused: nothing saved, staff can fix it and send again. No answer: may be saved, check first.

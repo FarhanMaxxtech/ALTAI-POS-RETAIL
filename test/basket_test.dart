@@ -22,8 +22,7 @@ class FakeApi implements CheckoutApi {
   final sentEpcs = <List<String>>[];
   Object? nextError;
   bool recordedDespiteError = false; // the send failed on our side but the team's API kept it
-  String? recordedRef; // what findByRef will find
-  int findCalls = 0;
+  String? recordedRef; // a sale the team's API already has: the same ref again answers with it
   int inspectCalls = 0;
   Map<String, dynamic> Function(String epc) tag = (epc) => {
     'epc': epc,
@@ -54,6 +53,7 @@ class FakeApi implements CheckoutApi {
     String exchangeFor = '',
   }) async {
     refs.add(clientRef);
+    if (recordedRef == clientRef) return '501'; // "duplicate": the first sale, not a second one
     receipts.add(receiptNo.isNotEmpty ? receiptNo : 'none: $noReceiptReason');
     sentEpcs.add(epcs);
     final e = nextError;
@@ -64,12 +64,6 @@ class FakeApi implements CheckoutApi {
     }
     recordedRef = clientRef;
     return '501';
-  }
-
-  @override
-  Future<String?> findByRef(String storeId, String clientRef) async {
-    findCalls++;
-    return recordedRef == clientRef ? '501' : null;
   }
 
   @override
@@ -180,7 +174,7 @@ void main() {
     expect(api.sentEpcs.single, [tagA]);
   });
 
-  test('no answer and not recorded: frozen, Try again checks, then sends the same ref', () async {
+  test('no answer and not recorded: frozen, Try again sends the same ref', () async {
     await scan(tagA);
     api.nextError = ApiException('No Wi-Fi');
     await basket.complete();
@@ -190,13 +184,12 @@ void main() {
     expect(basket.items.length, 1, reason: 'the basket must not change while unconfirmed');
 
     await basket.complete();
-    expect(api.findCalls, 1);
     expect(basket.phase, BasketPhase.done);
     expect(api.refs.length, 2);
     expect(api.refs[0], api.refs[1]);
   });
 
-  test('no answer but recorded anyway: Try again finds it and never sends twice', () async {
+  test('no answer but recorded anyway: Try again sends the same ref, and the API answers with that sale', () async {
     await scan(tagA);
     api.nextError = ApiException('The server took too long to answer.');
     api.recordedDespiteError = true;
@@ -206,7 +199,9 @@ void main() {
     await basket.complete();
     expect(basket.phase, BasketPhase.done);
     expect(basket.trxId, '501');
-    expect(api.refs.length, 1, reason: 'sending again would sell the same pieces twice');
+    expect(api.refs, hasLength(2));
+    expect(api.refs[1], api.refs[0], reason: 'a new ref would sell the same pieces twice');
+    expect(api.receipts, hasLength(1), reason: 'only one sale was recorded');
   });
 
   test('refused by the team API: back to the basket, nothing recorded', () async {
@@ -255,18 +250,25 @@ void main() {
     expect(api.receipts.single, 'none: StoreHub offline');
   });
 
-  test('the remark carries the receipt, cleaned, and reads back', () {
-    final remark = CheckoutApi.remark('abc', 'Aina', at: DateTime(2026, 11, 5, 9, 5, 1), receiptNo: ' sh 0012 ');
-    expect(remark, 'Altai POS · Aina · 09:05:01 · rcpt SH0012 · ref abc');
-    final s = CheckoutSummary.fromTeam({'trxDate': '2026-11-05', 'remark': remark});
+  test('the receipt comes back from its field; older sales from the remark', () {
+    final remark = CheckoutApi.remark('Aina', at: DateTime(2026, 11, 5, 9, 5, 1));
+    expect(remark, 'Altai POS · Aina · 09:05:01');
+    final s = CheckoutSummary.fromTeam({'trxDate': '2026-11-05', 'remark': remark, 'receiptNo': 'SH0012'});
     expect(s.receipt, 'SH0012');
     expect(s.cashier, 'Aina');
+    expect(s.createdAt, DateTime(2026, 11, 5, 9, 5, 1));
 
-    final none = CheckoutApi.remark('abc', '', noReceiptReason: 'Receipt lost');
-    final n = CheckoutSummary.fromTeam({'trxDate': '2026-11-05', 'remark': none});
+    final n = CheckoutSummary.fromTeam(
+        {'trxDate': '2026-11-05', 'remark': CheckoutApi.remark(''), 'noReceiptReason': 'Receipt lost'});
     expect(n.receipt, isNull);
     expect(n.noReceiptReason, 'Receipt lost');
     expect(n.cashier, isNull);
+
+    // Sales from before the fields: the receipt was in the remark.
+    final old = CheckoutSummary.fromTeam(
+        {'trxDate': '2026-11-05', 'remark': 'Altai POS · Aina · 09:05:01 · rcpt SH0012 · ref abc', 'receiptNo': ''});
+    expect(old.receipt, 'SH0012');
+    expect(old.cashier, 'Aina');
   });
 
   test('a bound-items error from Altai is put in words for the cashier', () {

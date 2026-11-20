@@ -97,10 +97,6 @@ class CheckoutApi {
     }
   }
 
-  /// Stock/Checkout: records the sale and takes the tags out of the store's stock.
-  /// [clientRef] goes into the remark, so [findByRef] can tell later whether it went through.
-  /// [receiptNo] (the StoreHub receipt) goes there too, so the sale can be matched with StoreHub;
-  /// without one, [noReceiptReason] says why. Returns the team's transaction number.
   /// One page of the store's tag list (Stock/EpcList by store): kept on the tablet by StoreTags.
   Future<({List<Map<String, dynamic>> rows, int total})> storeTagPage(String storeId, int page, {int pageSize = 200}) async {
     final res = await _api.post('Stock/EpcList', {
@@ -115,6 +111,14 @@ class CheckoutApi {
     return (rows: rows, total: total);
   }
 
+  /// Stock/Checkout: records the sale and takes the tags out of the store's stock. Returns the team's
+  /// transaction number.
+  ///
+  /// [receiptNo] is the StoreHub receipt of the sale, so the cross-check can match it with StoreHub;
+  /// without one, [noReceiptReason] says why. For the new items of an exchange, [exchangeFor] is the
+  /// ORIGINAL sale's receipt (StoreHub doesn't link the two). [clientRef] is new for each sale and the
+  /// same when sending again after no answer: if the first one was saved after all, the team's API
+  /// answers with that one ("duplicate") instead of selling the pieces twice.
   Future<String> checkout({
     required String storeId,
     required String clientRef,
@@ -124,71 +128,51 @@ class CheckoutApi {
     String noReceiptReason = '',
     String exchangeFor = '',
   }) async {
+    final receipt = fit(cleanReceipt(receiptNo), 50);
+    final original = fit(cleanReceipt(exchangeFor), 50);
+    final reason = fit(noReceiptReason.trim(), 100);
     final res = await _api.post('Stock/Checkout', {
       'storeId': storeId,
       'trxDate': _day(DateTime.now()),
-      'remark': remark(
-        clientRef,
-        staffName,
-        receiptNo: receiptNo,
-        noReceiptReason: noReceiptReason,
-        exchangeFor: exchangeFor,
-      ),
+      'remark': remark(staffName),
       'epcs': epcs,
+      'clientRef': clientRef,
+      if (receipt.isNotEmpty) 'receiptNo': receipt else if (reason.isNotEmpty) 'noReceiptReason': reason,
+      if (original.isNotEmpty) 'exchangeReceiptNo': original,
     });
     final trxId = res['trxId'];
-    // Recorded, but we can't show which transaction: treated like no answer, so findByRef settles it.
+    // Recorded, but we can't show which transaction: treated like no answer, so sending again settles it.
     if (trxId == null) throw ApiException('The server sent no transaction number.', status: 502);
     return trxId.toString();
   }
 
-  /// The remark saved with each sale: "Altai POS · Aina · 14:32:05 · rcpt SH-0012 · ref 3f9c…".
-  /// The time is there because the team's list only keeps the date. Without a receipt the reason
-  /// takes its place: "… · no rcpt: StoreHub offline · ref …". The new items of an exchange also name
-  /// the original receipt: "… · rcpt SH-0020 · exch SH-0012 · ref …".
-  static String remark(
-    String clientRef,
-    String staffName, {
-    DateTime? at,
-    String receiptNo = '',
-    String noReceiptReason = '',
-    String exchangeFor = '',
-  }) {
+  /// The free note saved with each sale: "Altai POS · Aina · 14:32:05". The time is there because the
+  /// team's list only keeps the date. (The receipt, the reason and the ref have their own fields now.)
+  static String remark(String staffName, {DateTime? at}) {
     final t = at ?? DateTime.now();
     String two(int n) => n.toString().padLeft(2, '0');
-    final receipt = cleanReceipt(receiptNo);
-    final reason = noReceiptReason.replaceAll('·', ' ').trim();
-    final original = cleanReceipt(exchangeFor);
     return [
       'Altai POS',
-      if (staffName.isNotEmpty) staffName,
+      if (staffName.isNotEmpty) staffName.replaceAll('·', ' '),
       '${two(t.hour)}:${two(t.minute)}:${two(t.second)}',
-      if (receipt.isNotEmpty) 'rcpt $receipt' else if (reason.isNotEmpty) 'no rcpt: $reason',
-      if (original.isNotEmpty) 'exch $original',
-      'ref $clientRef',
     ].join(' · ');
   }
+
+  /// At most [max] characters: the team's API refuses a longer field.
+  static String fit(String text, int max) => text.length <= max ? text : text.substring(0, max);
 
   /// "  sh-0012 " → "SH-0012". Spaces and the "·" separator are dropped, so it reads back cleanly.
   static String cleanReceipt(String receiptNo) =>
       receiptNo.replaceAll('·', '').replaceAll(RegExp(r'\s+'), '').toUpperCase();
 
-  /// Earlier checkouts in this store (today and yesterday) on the same StoreHub receipt, newest first.
+  /// Earlier checkouts in this store (the last 30 days) on the same StoreHub receipt, newest first.
   Future<List<CheckoutSummary>> findByReceipt(String storeId, String receiptNo) async {
     final receipt = cleanReceipt(receiptNo);
     if (receipt.isEmpty) return const [];
-    return (await recent(storeId)).where((c) => c.receipt == receipt).toList();
-  }
-
-  /// After a sale got no answer: was it recorded anyway? Looks for its ref in today's and yesterday's
-  /// checkouts (yesterday in case midnight passed). Returns the transaction number, or null if it isn't there.
-  Future<String?> findByRef(String storeId, String clientRef) async {
-    for (final r in await _list(storeId)) {
-      if ((r['remark']?.toString() ?? '').contains('ref $clientRef')) {
-        return (r['trxId'] ?? r['id']).toString();
-      }
-    }
-    return null;
+    final now = DateTime.now();
+    final rows = await _list(storeId, from: now.subtract(const Duration(days: 30)), to: now, receiptNo: receipt);
+    return rows.map(CheckoutSummary.fromTeam).where((c) => c.receipt == receipt).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
   /// Checkouts in this store from [from] to [to] (whole days, default today and yesterday),
@@ -206,12 +190,13 @@ class CheckoutApi {
     return CheckoutDetail.fromTeam(data is Map<String, dynamic> ? data : res);
   }
 
-  Future<List<Map<String, dynamic>>> _list(String storeId, {DateTime? from, DateTime? to}) async {
+  Future<List<Map<String, dynamic>>> _list(String storeId, {DateTime? from, DateTime? to, String? receiptNo}) async {
     final now = DateTime.now();
     final res = await _api.get('Stock/CheckoutList', {
       'storeId': storeId,
       'dateFrom': _day(from ?? now.subtract(const Duration(days: 1))),
       'dateTo': _day(to ?? now),
+      'receiptNo': ?receiptNo,
     });
     return (res['data'] as List<dynamic>? ?? const []).cast<Map<String, dynamic>>();
   }
